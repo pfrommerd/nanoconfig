@@ -27,12 +27,44 @@ class Option:
     # If MISSING, then the option is required.
     default: ty.Any | Missing
 
-def as_options(type : ty.Type[T], default : T | Missing = MISSING, *, 
+@dataclass
+class Options(ty.Generic[T]):
+    root_type : ty.Type[T]
+    default : ty.Any | Missing
+    opts : list[Option]
+
+    @staticmethod
+    def as_options(type: ty.Type[T],
+                   default: T | Missing = MISSING,
+                   *, prefix : str = "") -> "Options":
+        return Options(
+            type, default,
+            list(_as_options(type, default=default, prefix=prefix))
+        )
+
+    def parse(self,
+        args: list[str] | None = None,
+        parse_all: bool = True,
+        parse_help = True
+    ) -> dict[str, str]:
+        if args is None:
+            args = list(sys.argv[1:])
+        return _parse_cli_options(self.opts, args=args,
+            parse_all=parse_all, parse_help=parse_help)
+
+    def from_parsed(self,
+        options: dict[str, str],
+    ) -> T:
+        return _from_parsed_options(options, self.root_type,
+            default=self.default, prefix=""
+        ) # type: ignore
+
+def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
                 # For variants, the type of the base class for the variant.
                 # We will not include options contained in the base type.
                 relative_to_base : ty.Type | None = None,
                 prefix : str = "",
-            ) -> ty.Iterator[Option] | T:
+            ) -> ty.Iterator[Option]:
     if isinstance(type, ty.Type) and issubclass(type, Config):
         # If we have variants, add a "type" option
         variants = type.__variants__
@@ -46,16 +78,14 @@ def as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
             if type_default not in variant_lookup:
                 raise ValueError(f"No variant registration for type {type_default} at \"{prefix}\".")
             type_default = variant_lookup[type_default] if type_default is not MISSING else MISSING
-
             yield Option(_join(prefix, "type"), str, type_default)
-
         # Do not output fields for the base class
         # if relative_to_base is not None
         base_fields = (
-            set() if relative_to_base is None else 
+            set() if relative_to_base is None else
             set(f.name for f in fields(relative_to_base))
         )
-        for f in fields(type):
+        for f in fields(type): # type: ignore
             if f.name in base_fields: # We should not include these fields
                 continue
             field_default = (
@@ -63,7 +93,7 @@ def as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
                 (f.default if f.default is not DC_MISSING else MISSING)
             )
             flat = f.metadata.get("flat", False)
-            yield from as_options(f.type, default=field_default,
+            yield from _as_options(f.type, default=field_default, # type: ignore
                                prefix=prefix if flat else _join(prefix, f.name))
         # If we have variants, output each of the variant options
         if variants:
@@ -76,7 +106,7 @@ def as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
                 subvariant_default = (
                     default if variant_type is _type(default) else MISSING
                 )
-                yield from as_options(variant_type,
+                yield from _as_options(variant_type,
                     default=subvariant_default,
                     prefix=_join(prefix, alias),
                     relative_to_base=type
@@ -84,32 +114,18 @@ def as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
     elif isinstance(type, ty.Type) and issubclass(type, (str, int, float, bool)):
         yield Option(prefix, type, default)
     elif _is_optional(type)[0]:
-        type = _is_optional(type)[1]
-        yield from as_options(type, default=None if default is MISSING else default, prefix=prefix)
-    elif isinstance(type, (ty.GenericAlias, ty._GenericAlias)):
+        type = _is_optional(type)[1] # type: ignore
+        yield from _as_options(type, default=None if default is MISSING else default, prefix=prefix)
+    elif isinstance(type, (ty.GenericAlias, ty._GenericAlias)): # type: ignore
         logger.warning(f"unknown option generic type {type}")
     else:
         raise ValueError(f"Unable to convert type {type} to option.")
 
-def _is_optional(t: object) -> tuple[bool, ty.Type]:
-    origin = ty.get_origin(t)
-    if not (origin is ty.Union or origin is types.UnionType):
-        return False, None
-    a, b = ty.get_args(t)
-    if a is type(None) or b is type(None):
-        return True, a if a is not None else b
-
-
-def _join(prefix, name):
-    if prefix:
-        return f"{prefix}.{name}"
-    return name
-
 # Will parse the options, removing any parsed
 # options from the dictionary
-def from_parsed_options(options: dict[str, str], 
+def _from_parsed_options(options: dict[str, str],
                   type : ty.Type[T], default: T | Missing = MISSING, *,
-                  prefix="") -> T:
+                  prefix="") -> T | Missing:
     if isinstance(type, ty.Type) and issubclass(type, Config):
         if type.__variants__:
             default_type = _type(default) if default is not MISSING else (
@@ -128,16 +144,17 @@ def from_parsed_options(options: dict[str, str],
                 default = MISSING
         else:
             config_type = type
+            variant = MISSING
         config_fields = {}
         # First go through the base fields
-        for f in fields(type):
+        for f in fields(type): # type: ignore
             flat = f.metadata.get("flat", False)
             config_fields[f.name] = (
                 prefix if flat else _join(prefix, f.name), f
             )
         # Go through the variant-specific fields
         if config_type is not type:
-            for f in fields(config_type):
+            for f in fields(config_type): # type: ignore
                 # If we are overriding a base field,
                 # override the field so we get the updated default
                 flat = f.metadata.get("flat", False)
@@ -157,36 +174,35 @@ def from_parsed_options(options: dict[str, str],
                 getattr(default, f.name) if default is not MISSING else
                 (f.default if f.default is not DC_MISSING else MISSING)
             )
-            value = from_parsed_options(options, f.type, default_value, 
+            value = _from_parsed_options(options, f.type, default_value,
                                         prefix=field_prefix)
             if value is not MISSING:
                 config_args[f.name] = value
-        return config_type(**config_args)
+        return config_type(**config_args) # type: ignore
     elif isinstance(type, ty.Type) and issubclass(type, (str, int, float, bool)):
         value = options.pop(prefix, default)
         if value is MISSING:
             raise OptionParseError(f"Missing option {prefix} for {type}")
         if issubclass(type, bool) and type(value) is str:
-            value = value.lower() == "true"
-        return type(value)
+            value = value.lower() == "true" # type: ignore
+        return type(value) # type: ignore
     elif _is_optional(type)[0]:
-        type = _is_optional(type)[1]
-        return from_parsed_options(options, type, default=None if default is MISSING else default, prefix=prefix)
-    elif isinstance(type, (ty.GenericAlias,ty._GenericAlias)):
+        type = _is_optional(type)[1] # type: ignore
+        return _from_parsed_options(options, type,
+            default=None if default is MISSING else default, prefix=prefix) # type: ignore
+    elif isinstance(type, (ty.GenericAlias,ty._GenericAlias)): # type: ignore
         logger.warning(f"unknown parsing of generic type {type}")
         return MISSING
     else:
         raise OptionParseError(f"Unable to parse options for type {type}.")
 
 # Will parse all known options from the list
-def parse_cli_options(options: ty.Iterable[Option],
-                  args: list[str] | None = None,
+def _parse_cli_options(options: ty.Iterable[Option],
+                  args: list[str],
                   parse_all: bool = True, parse_help = True) -> dict[str, str]:
     options = list(options)
     options.append(Option("help", bool, False))
     valid_keys = set(o.name for o in options)
-    if args is None:
-        args = list(sys.argv[1:])
     parsed_options = {}
     parsed_args = []
     last_key = None
@@ -233,3 +249,17 @@ def parse_cli_options(options: ty.Iterable[Option],
         sys.exit(0)
 
     return parsed_options
+
+def _is_optional(t: object) -> tuple[bool, ty.Type | None]:
+    origin = ty.get_origin(t)
+    if not (origin is ty.Union or origin is types.UnionType):
+        return False, None
+    a, b = ty.get_args(t)
+    if a is type(None) or b is type(None):
+        return True, a if a is not None else b
+    return False, None
+
+def _join(prefix, name):
+    if prefix:
+        return f"{prefix}.{name}"
+    return name

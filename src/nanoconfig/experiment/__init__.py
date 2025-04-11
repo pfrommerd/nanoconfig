@@ -1,26 +1,30 @@
 import abc
 import pandas as pd
-import typing as tp
+import typing as ty
 import numpy as np
+import functools
+import logging
+
+from logging import Logger
+from pathlib import Path
 
 from .. import config, field, utils
 
 class Dummy: ...
 
-# PlotlyFigure = Dummy
-# MplFigure = Dummy
-try:
-    from plotly.graph_objects import Figure as PlotlyFigure
-except ImportError:
-    pass
-try:
-    from matplotlib.figure import Figure as MplFigure
-except ImportError:
-    pass
-
 class Experiment(abc.ABC):
+    def __init__(self, main: ty.Callable | None, args: dict[str, ty.Any]) -> None:
+        self.main = main
+        self.args = args
+
+    def run(self) -> ty.Any:
+        if not self.main:
+            return
+        return self.main(self, **self.args)
+
     def log(self, result: "NestedResult",
                   path: str | None = None,
+                  series: str | None = None,
                   step: int | None = None):
         for k, v in utils.flatten_items(result):
             if isinstance(v, Result):
@@ -33,27 +37,38 @@ class Experiment(abc.ABC):
                    series: str |None = None, step: int | None = None): ...
 
     @abc.abstractmethod
-    def log_figure(self, path: str, figure: PlotlyFigure | MplFigure | dict,
+    def log_figure(self, path: str, figure: ty.Any | dict,
                    series: str | None = None, step: int | None = None): ...
 
     @abc.abstractmethod
     def log_table(self, path: str, table: pd.DataFrame,
                   series: str | None = None, step: int | None = None): ...
 
-class ConsoleExperiment(Experiment):
-    def __init__(self, logger, series_intervals={}):
+class ConsoleMixin:
+    def __init__(self, logger : Logger | None = None,
+                console_intervals : dict[str, int] = {}):
         self.logger = logger
-        self.series_intervals = series_intervals
+        self.console_intervals = console_intervals
 
     def log_metric(self, path: str, value: float,
                    series: str | None = None, step: int | None = None):
+        if self.logger is None:
+            return
         console_path = path.replace("/", ".")
         if step is not None:
-            interval = self.series_intervals.get(series, 1)
+            interval = self.console_intervals.get(series, 1) if series else 1
             if step % interval == 0:
                 self.logger.info(f"{step} - {console_path}: {value} ({series})")
 
-    def log_figure(self, path: str, figure : tp.Any, 
+class LocalExperiment(ConsoleMixin, Experiment):
+    def __init__(self, *, logger : Logger | None = None,
+                    console_intervals : dict[str, int] ={},
+                    main : ty.Callable | None = None,
+                    args: dict[str, ty.Any] = {}):
+        ConsoleMixin.__init__(self, logger, console_intervals)
+        Experiment.__init__(self, main=main, args=args)
+
+    def log_figure(self, path: str, figure: ty.Any | dict,
                    series: str | None = None, step: int | None = None):
         pass
 
@@ -61,52 +76,38 @@ class ConsoleExperiment(Experiment):
                   series: str | None = None, step: int | None = None):
         pass
 
-class CombinedExperiment(Experiment):
-    def __init__(self, *experiments: Experiment):
-        self.experiments = experiments
-
-    def log_metric(self, path: str, value: float, 
-                   series : str | None = None, step: int | None = None):
-        for experiment in self.experiments:
-            experiment.log_metric(path, value, series=series, step=step) 
-    
-    def log_figure(self, path: str, figure : tp.Any,
-                     series: str | None = None, step: int | None = None):
-          for experiment in self.experiments:
-                experiment.log_figure(path, figure, series=series, step=step)
-    
-    def log_table(self, path: str, table: pd.DataFrame,
-                     series: str | None = None, step: int | None = None):
-          for experiment in self.experiments:
-                experiment.log_table(path, table, series=series, step=step)
-
 class Result(abc.ABC):
     @abc.abstractmethod
-    def log(self, experiment: Experiment, path: str, step: int | None): ...
+    def log(self, experiment: Experiment, path: str,
+            series: str | None = None, step: int | None = None): ...
 
 NestedResult = dict[str, "NestedResult"] | Result
 
 class Metric(Result):
-    def __init__(self, series: str | None, value: float):
-        self.series = series
+    def __init__(self, value: float):
         self.value = value
 
-    def log(self, experiment: Experiment, path: str, step: int | None):
-        experiment.log_metric(path, self.series, self.value, step=step)
+    def log(self, experiment: Experiment, path: str,
+            series: str | None = None, step: int | None = None):
+        experiment.log_metric(path, self.value, series=series, step=step)
 
 class Table(Result):
     def __init__(self, dataframe: pd.DataFrame):
         self.dataframe = dataframe
-    
-    def log(self, experiment: Experiment, path: str, step: int | None):
-        experiment.log_table(path, self.dataframe, step=step)
+
+    def log(self, experiment: Experiment, path: str,
+            series: str | None = None, step: int | None = None):
+        experiment.log_table(path, self.dataframe,
+                             series=series, step=step)
 
 class Figure(Result):
     def __init__(self, figure):
         self.figure = figure
-    
-    def log(self, experiment: Experiment, path: str, step: int | None):
-        experiment.log_figure(path, self.figure, step=step)
+
+    def log(self, experiment: Experiment, path: str,
+            series: str | None = None, step: int | None = None):
+        experiment.log_figure(path, self.figure,
+                              series=series, step=step)
 
 
 @config
@@ -114,24 +115,39 @@ class ExperimentConfig:
     project: str | None = None
 
     console: bool = True
-    # The interval only applies to 
-    # metrics with the train/ prefix
+    remote: bool = False
+    queue: str = "default"
+
+    clearml: bool = False
+
     console_intervals: dict[str, int] = field(default_factory=lambda: {
         "train": 100,
         "test": 1
     })
 
-    wandb: bool = False
-    clearml: bool = False
-    cometml : bool = False
-
-    def create(self, logger):
+    def create(self, logger : Logger | None = None,
+                root: Path | None = None,
+                main: ty.Callable | None = None,
+                **kwargs) -> Experiment:
+        if not self.console:
+            logger = None
+        elif logger is None:
+            logger = logging.getLogger(__name__)
         experiments = []
-        if self.console:
-            experiments.append(ConsoleExperiment(
-                logger=logger, series_intervals=self.console_intervals
-            ))
         if self.clearml:
             from .clearml import ClearMLExperiment
-            experiments.append(ClearMLExperiment(project_name=self.project))
-        return CombinedExperiment(*experiments)
+            return ClearMLExperiment(
+                project_name=self.project,
+                logger=logger, remote=self.remote,
+                console_intervals=self.console_intervals,
+                root=root,
+                main=main,
+                args=kwargs
+            )
+        else:
+            return LocalExperiment(
+                logger=logger,
+                console_intervals=self.console_intervals,
+                main=main,
+                args=kwargs
+            )

@@ -19,7 +19,7 @@ class ConfigType(type):
     def __init__(self, cls, bases, namespace):
         super().__init__(cls, bases, namespace)
         self.__variants__ = {}
-    
+
 
 # For abstract classes, we need to use a metaclass
 # that is a subclass of ConfigType, but also abc.ABCMeta
@@ -29,7 +29,7 @@ class AbstractConfigType(ConfigType, abc.ABCMeta):
 class Config(object, metaclass=ConfigType):
     def to_dict(self) -> dict[str, ty.Any]:
         res = {}
-        for f in fields(self):
+        for f in fields(self): # type: ignore
             v = getattr(self, f.name)
             if isinstance(v, Config):
                 res[f.name] = v.to_dict()
@@ -39,7 +39,7 @@ class Config(object, metaclass=ConfigType):
                         raise TypeError(
                             f"Field {f.name} has type {f.type}, but value is {type(v)}"
                         )
-                    type_variants = {v:k for k,v in f.type.__variants__.items()}
+                    type_variants = {v:k for k,v in f.type.__variants__.items()} # type: ignore
                     if not v_t in type_variants:
                         raise TypeError(
                             f"Field {f.name} has type {f.type}, but value is {type(v)}"
@@ -48,16 +48,16 @@ class Config(object, metaclass=ConfigType):
             else:
                 res[f.name] = v
         return res
-    
+
     @classmethod
     def from_dict(cls, data: dict[str, ty.Any]) -> "Config":
         # Create a new instance of the class
         args = {}
-        for f in fields(cls):
+        for f in fields(cls): # type: ignore
             if isinstance(f.type, ty.Type) and issubclass(f.type, Config):
                 sub_dict = data.get(f.name)
-                if "type" in sub_dict:
-                    args[f.name] = f.type.__variants__[sub_dict["type"]].from_dict(sub_dict)
+                if "type" in sub_dict: # type: ignore
+                    args[f.name] = f.type.__variants__[sub_dict["type"]].from_dict(sub_dict) # type: ignore
                 else:
                     args[f.name] = f.type.from_dict(data.get(f.name, f.default))
             else:
@@ -65,17 +65,24 @@ class Config(object, metaclass=ConfigType):
         instance = cls(**args)
         return instance
 
-def field(*, default: ty.Any = MISSING, 
+def field(*, default: ty.Any = MISSING,
           default_factory: ty.Callable[[], ty.Any] | Missing = MISSING,
           flat: bool = False) -> ty.Any:
     # Add the field
     return _field(
         default=DC_MISSING if default is MISSING else default,
-        default_factory=DC_MISSING if default_factory is MISSING else default_factory,
-        metadata={"flat": flat})
+        default_factory=DC_MISSING if default_factory is MISSING else default_factory, # type: ignore
+        metadata={"flat": flat}) # type: ignore
 
-@ty.dataclass_transform(field_specifiers=(field,))
-def config(cls: ty.Type[T] = None, *, variant : str | None = None) -> type:
+@ty.dataclass_transform()
+@ty.overload
+def config(cls: None = None, *, variant: str | None = None) -> ty.Callable[[ty.Type[T]], ty.Type[T]]: ...
+
+@ty.dataclass_transform()
+@ty.overload
+def config(cls: ty.Type[T], *, variant: str | None = None) -> ty.Type[T]: ...
+
+def config(cls = None, *, variant = None): # type: ignore
     if cls is None:
         return functools.partial(config, variant=variant)
     # Handle abstract classes
@@ -84,7 +91,7 @@ def config(cls: ty.Type[T] = None, *, variant : str | None = None) -> type:
     else:
         metaclass = ConfigType
 
-    cls = dataclass(cls, frozen=True)
+    cls = dataclass(cls, frozen=True) # type: ignore
     class clz(cls, Config, metaclass=metaclass):
         pass
     # Mixin Config
