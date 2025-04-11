@@ -1,5 +1,6 @@
 from dataclasses import (
     dataclass, field as _field,
+    fields,
     MISSING as DC_MISSING,
 )
 import typing as ty
@@ -18,6 +19,7 @@ class ConfigType(type):
     def __init__(self, cls, bases, namespace):
         super().__init__(cls, bases, namespace)
         self.__variants__ = {}
+    
 
 # For abstract classes, we need to use a metaclass
 # that is a subclass of ConfigType, but also abc.ABCMeta
@@ -25,7 +27,43 @@ class AbstractConfigType(ConfigType, abc.ABCMeta):
     pass
 
 class Config(object, metaclass=ConfigType):
-    pass
+    def to_dict(self) -> dict[str, ty.Any]:
+        res = {}
+        for f in fields(self):
+            v = getattr(self, f.name)
+            if isinstance(v, Config):
+                res[f.name] = v.to_dict()
+                v_t = type(v)
+                if f.type != v_t:
+                    if not hasattr(f.type, "__variants__"):
+                        raise TypeError(
+                            f"Field {f.name} has type {f.type}, but value is {type(v)}"
+                        )
+                    type_variants = {v:k for k,v in f.type.__variants__.items()}
+                    if not v_t in type_variants:
+                        raise TypeError(
+                            f"Field {f.name} has type {f.type}, but value is {type(v)}"
+                        )
+                    res[f.name]["type"] = type_variants[v_t]
+            else:
+                res[f.name] = v
+        return res
+    
+    @classmethod
+    def from_dict(cls, data: dict[str, ty.Any]) -> "Config":
+        # Create a new instance of the class
+        args = {}
+        for f in fields(cls):
+            if isinstance(f.type, ty.Type) and issubclass(f.type, Config):
+                sub_dict = data.get(f.name)
+                if "type" in sub_dict:
+                    args[f.name] = f.type.__variants__[sub_dict["type"]].from_dict(sub_dict)
+                else:
+                    args[f.name] = f.type.from_dict(data.get(f.name, f.default))
+            else:
+                args[f.name] = data.get(f.name, f.default)
+        instance = cls(**args)
+        return instance
 
 def field(*, default: ty.Any = MISSING, 
           default_factory: ty.Callable[[], ty.Any] | Missing = MISSING,

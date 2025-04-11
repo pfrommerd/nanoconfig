@@ -78,7 +78,7 @@ def as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
                 )
                 yield from as_options(variant_type,
                     default=subvariant_default,
-                    prefix=f"{prefix}{alias}.",
+                    prefix=_join(prefix, alias),
                     relative_to_base=type
                 )
     elif isinstance(type, ty.Type) and issubclass(type, (str, int, float, bool)):
