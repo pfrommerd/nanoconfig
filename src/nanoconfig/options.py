@@ -1,4 +1,4 @@
-from . import Config, Missing, MISSING
+from . import Config, Missing, MISSING, utils
 
 from dataclasses import dataclass, fields, MISSING as DC_MISSING
 import typing as ty
@@ -19,9 +19,11 @@ class Option:
     name: str
     # The following have no practical impact
     # on the parsing part, but are used for help documentation
-    type: type # May be int, float, str, bool,
-               # dict[str, str], list[T], tuple[T]
-               # ty.Any yields a generic type of one of the above
+
+    # May be int, float, str, bool,
+    # dict[str, T], list[T], tuple[T]
+    # ty.Any yields a generic type of one of the above.
+    type: type
     # A default value. Used for help documentation,
     # but not actually returned as a default value.
     # If MISSING, then the option is required.
@@ -111,15 +113,8 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
                     prefix=_join(prefix, alias),
                     relative_to_base=type
                 )
-    elif isinstance(type, ty.Type) and issubclass(type, (str, int, float, bool)):
-        yield Option(prefix, type, default)
-    elif _is_optional(type)[0]:
-        type = _is_optional(type)[1] # type: ignore
-        yield from _as_options(type, default=None if default is MISSING else default, prefix=prefix)
-    elif isinstance(type, (ty.GenericAlias, ty._GenericAlias)): # type: ignore
-        logger.warning(f"unknown option generic type {type}")
     else:
-        raise ValueError(f"Unable to convert type {type} to option.")
+        yield Option(prefix, type, default)
 
 # Will parse the options, removing any parsed
 # options from the dictionary
@@ -179,24 +174,13 @@ def _from_parsed_options(options: dict[str, str],
             if value is not MISSING:
                 config_args[f.name] = value
         return config_type(**config_args) # type: ignore
-    elif isinstance(type, ty.Type) and issubclass(type, (str, int, float, bool)):
-        value = options.pop(prefix, default)
-        if value is MISSING:
-            raise OptionParseError(f"Missing option {prefix} for {type}")
-        if issubclass(type, bool) and type(value) is str:
-            value = value.lower() == "true" # type: ignore
-        return type(value) # type: ignore
-    elif _is_optional(type)[0]:
-        type = _is_optional(type)[1] # type: ignore
-        return _from_parsed_options(options, type,
-            default=None if default is MISSING else default, prefix=prefix) # type: ignore
-    elif isinstance(type, (ty.GenericAlias,ty._GenericAlias)): # type: ignore
-        logger.warning(f"unknown parsing of generic type {type}")
-        return MISSING
     else:
-        raise OptionParseError(f"Unable to parse options for type {type}.")
+        opt : str | Missing = options.get(prefix, MISSING)
+        if opt is not MISSING:
+            return utils.parse_value(opt, type) # type: ignore
+        else:
+            return default
 
-# Will parse all known options from the list
 def _parse_cli_options(options: ty.Iterable[Option],
                   args: list[str],
                   parse_all: bool = True, parse_help = True) -> dict[str, str]:
@@ -238,7 +222,10 @@ def _parse_cli_options(options: ty.Iterable[Option],
     if parsed_options.get("help", False):
         print("Options:")
         for opt in options:
-            type_name = opt.type.__name__
+            type_name = (opt.type.__qualname__
+                if isinstance(opt.type, ty.Type) else
+                str(opt.type)
+            )
             if opt.type == bool:
                 print(f"  --{opt.name}")
             else:
@@ -250,14 +237,6 @@ def _parse_cli_options(options: ty.Iterable[Option],
 
     return parsed_options
 
-def _is_optional(t: object) -> tuple[bool, ty.Type | None]:
-    origin = ty.get_origin(t)
-    if not (origin is ty.Union or origin is types.UnionType):
-        return False, None
-    a, b = ty.get_args(t)
-    if a is type(None) or b is type(None):
-        return True, a if a is not None else b
-    return False, None
 
 def _join(prefix, name):
     if prefix:

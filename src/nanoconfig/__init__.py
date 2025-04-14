@@ -3,6 +3,7 @@ from dataclasses import (
     fields,
     MISSING as DC_MISSING,
 )
+from . import utils
 import typing as ty
 import functools
 import abc
@@ -19,7 +20,6 @@ class ConfigType(type):
     def __init__(self, cls, bases, namespace):
         super().__init__(cls, bases, namespace)
         self.__variants__ = {}
-
 
 # For abstract classes, we need to use a metaclass
 # that is a subclass of ConfigType, but also abc.ABCMeta
@@ -50,18 +50,25 @@ class Config(object, metaclass=ConfigType):
         return res
 
     @classmethod
-    def from_dict(cls, data: dict[str, ty.Any]) -> "Config":
+    def from_dict(cls, data: dict[str, ty.Any]) -> ty.Self:
         # Create a new instance of the class
         args = {}
         for f in fields(cls): # type: ignore
             if isinstance(f.type, ty.Type) and issubclass(f.type, Config):
-                sub_dict = data.get(f.name)
-                if "type" in sub_dict: # type: ignore
-                    args[f.name] = f.type.__variants__[sub_dict["type"]].from_dict(sub_dict) # type: ignore
+                sub_dict = data.get(f.name, None)
+                if sub_dict is None:
+                    if f.default is not DC_MISSING:
+                        args[f.name] = f.default
                 else:
-                    args[f.name] = f.type.from_dict(data.get(f.name, f.default))
+                    if "type" in sub_dict: # type: ignore
+                        args[f.name] = f.type.__variants__[sub_dict["type"]].from_dict(sub_dict) # type: ignore
+                    else:
+                        args[f.name] = f.type.from_dict(sub_dict)
             else:
-                args[f.name] = data.get(f.name, f.default)
+                value = data.get(f.name, f.default)
+                if isinstance(value, str):
+                    value = utils.parse_value(value, f.type) # type: ignore
+                args[f.name] = value
         instance = cls(**args)
         return instance
 

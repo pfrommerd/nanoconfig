@@ -8,19 +8,19 @@ import logging
 from logging import Logger
 from pathlib import Path
 
-from .. import config, field, utils
+from .. import Config, config, field, utils
 
 class Dummy: ...
 
 class Experiment(abc.ABC):
-    def __init__(self, main: ty.Callable | None, args: dict[str, ty.Any]) -> None:
+    def __init__(self, main: ty.Callable | None, config: Config | None) -> None:
         self.main = main
-        self.args = args
+        self.config = config
 
-    def run(self) -> ty.Any:
+    def run(self):
         if not self.main:
             return
-        return self.main(self, **self.args)
+        self.main(self)
 
     def log(self, result: "NestedResult",
                   path: str | None = None,
@@ -64,9 +64,9 @@ class LocalExperiment(ConsoleMixin, Experiment):
     def __init__(self, *, logger : Logger | None = None,
                     console_intervals : dict[str, int] ={},
                     main : ty.Callable | None = None,
-                    args: dict[str, ty.Any] = {}):
+                    config: Config | None = None):
         ConsoleMixin.__init__(self, logger, console_intervals)
-        Experiment.__init__(self, main=main, args=args)
+        Experiment.__init__(self, main=main, config=config)
 
     def log_figure(self, path: str, figure: ty.Any | dict,
                    series: str | None = None, step: int | None = None):
@@ -126,9 +126,8 @@ class ExperimentConfig:
     })
 
     def create(self, logger : Logger | None = None,
-                root: Path | None = None,
                 main: ty.Callable | None = None,
-                **kwargs) -> Experiment:
+                config: Config | None = None) -> Experiment:
         if not self.console:
             logger = None
         elif logger is None:
@@ -140,14 +139,13 @@ class ExperimentConfig:
                 project_name=self.project,
                 logger=logger, remote=self.remote,
                 console_intervals=self.console_intervals,
-                root=root,
                 main=main,
-                args=kwargs
+                config=config
             )
         else:
             return LocalExperiment(
                 logger=logger,
                 console_intervals=self.console_intervals,
                 main=main,
-                args=kwargs
+                config=config
             )
