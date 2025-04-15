@@ -69,9 +69,9 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
             ) -> ty.Iterator[Option]:
     if isinstance(type, ty.Type) and issubclass(type, Config):
         # If we have variants, add a "type" option
-        variants = type.__variants__
-        variant_lookup = {type: alias for alias, type in variants.items()}
-        if variants:
+        if _has_variant_tag(type, relative_to_base):
+            variants = type.__variants__
+            variant_lookup = {type: alias for alias, type in variants.items()}
             # If the type is an abstract class,
             # we require the user to specify
             type_default = MISSING if isinstance(type, abc.ABCMeta) else type
@@ -98,9 +98,10 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
             flat = f.metadata.get("flat", False)
             yield from _as_options(f.type, default=field_default, # type: ignore
                                prefix=prefix if flat else _join(prefix, f.name))
+
         # If we have variants, output each of the variant options
-        if variants:
-            for alias, variant_type in variants.items():
+        if _has_variant_tag(type, relative_to_base):
+            for alias, variant_type in type.__variants__.items():
                 # If the type is the same as the base type,
                 # we do not need to output the base type
                 if variant_type == type:
@@ -117,23 +118,31 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
     else:
         yield Option(prefix, type, default)
 
+def _has_variant_tag(type: ty.Type[T], relative_to_base: ty.Type):
+    if relative_to_base is not None:
+        return False
+    elif type.__variants__:
+        variant_lookup = {type: alias for alias, type in type.__variants__.items()}
+        return not (len(variant_lookup) == 1 and variant_lookup.get(type, False))
+
 # Will parse the options, removing any parsed
 # options from the dictionary
 def _from_parsed_options(options: dict[str, str],
                   type : ty.Type[T], default: T | Missing = MISSING, *,
                   prefix="") -> T | Missing:
     if isinstance(type, ty.Type) and issubclass(type, Config):
-        if type.__variants__:
+        if options.get(_join(prefix, "type"), MISSING) is not MISSING:
             default_type = _type(default) if default is not MISSING else (
                 type if not isinstance(type, abc.ABCMeta) else MISSING
             )
             variant = options.pop(_join(prefix, "type"), MISSING)
             if variant is not MISSING and variant not in type.__variants__:
                 raise OptionParseError(f"Invalid variant {variant} for {type}")
-            config_type = type.__variants__[variant] if variant is not MISSING else default_type
+            config_type = (type.__variants__[variant] 
+                           if variant is not MISSING else default_type)
             config_fields = default_type if config_type is MISSING else config_type
             if config_type is MISSING:
-                raise OptionParseError(f"Missing variant specifier {prefix}type for {type}")
+                raise OptionParseError(f"Missing variant specifier {prefix} for {type}")
             # If we specified a variant different than the default,
             # remove the default value.
             if config_type != default_type:
@@ -235,9 +244,7 @@ def _parse_cli_options(options: ty.Iterable[Option],
                 else:
                     print(f"  --{opt.name} ({type_name})")
         sys.exit(0)
-
     return parsed_options
-
 
 def _join(prefix, name):
     if prefix:
