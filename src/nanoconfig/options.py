@@ -131,7 +131,7 @@ def _from_parsed_options(options: dict[str, str],
                   type : ty.Type[T], default: T | Missing = MISSING, *,
                   prefix="") -> T | Missing:
     if isinstance(type, ty.Type) and issubclass(type, Config):
-        if options.get(_join(prefix, "type"), MISSING) is not MISSING:
+        if type.__variants__:
             default_type = _type(default) if default is not MISSING else (
                 type if not isinstance(type, abc.ABCMeta) else MISSING
             )
@@ -148,6 +148,8 @@ def _from_parsed_options(options: dict[str, str],
             if config_type != default_type:
                 default = MISSING
         else:
+            if default is not MISSING and type != _type(default):
+                raise OptionParseError(f"Default type and specified type must match exactly.")
             config_type = type
             variant = MISSING
         config_fields = {}
