@@ -12,7 +12,7 @@ dependencies = [
 packages = ["src/nanoconfig"]
 
 [project.scripts]
-clearml_launcher = "nanoconfig.experiment.util.clearml_launcher:run"
+clearml_task_launcher = "nanoconfig.experiment.util.clearml_launcher:run"
 
 [project.optional-dependencies]
 clearml = [

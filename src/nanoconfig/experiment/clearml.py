@@ -57,8 +57,6 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
 
     def run(self) -> ty.Any:
         if self.remote:
-            launch_script = "clearml_launcher"
-            launch_relative = launch_script.relative_to(Path.cwd())
             # Get the requirements from uv directly
             requirements = subprocess.run(["uv", "pip", "freeze", "--exclude-editable"], check=True, capture_output=True)
             requirements = requirements.stdout.decode("utf-8").split("\n")
@@ -67,7 +65,7 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
                 packages=requirements
             )
             self.task.set_script(
-                entry_point=str(launch_relative)
+                entry_point="clearml_task_launcher"
             )
             self.task.execute_remotely(
                 queue_name=self.queue,
