@@ -77,9 +77,10 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
             type_default = MISSING if isinstance(type, abc.ABCMeta) else type
             if default is not MISSING:
                 type_default = _type(default)
-            if type_default not in variant_lookup:
+            if type_default is not MISSING and type_default not in variant_lookup:
                 raise ValueError(f"No variant registration for type {type_default} at \"{prefix}\".")
-            type_default = variant_lookup[type_default] if type_default is not MISSING else MISSING
+            type_default = (variant_lookup[type_default]
+                            if type_default is not MISSING else MISSING)
             yield Option(_join(prefix, "type"), str, type_default)
         # Do not output fields for the base class
         # if relative_to_base is not None

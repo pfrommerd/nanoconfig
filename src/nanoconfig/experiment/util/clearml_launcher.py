@@ -15,7 +15,7 @@ import nanoconfig.utils
 from nanoconfig import Config
 from nanoconfig.experiment.clearml import ClearMLExperiment
 
-if __name__=="__main__":
+def run():
     task : clearml.Task = clearml.Task.init(
         auto_connect_arg_parser=False,
         auto_connect_streams={
@@ -54,3 +54,6 @@ if __name__=="__main__":
         config=config
     )
     main_func(experiment) # type: ignore
+
+if __name__=="__main__":
+    run()
