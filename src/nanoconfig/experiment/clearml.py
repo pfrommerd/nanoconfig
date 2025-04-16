@@ -85,9 +85,8 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
         )
 
     def log_figure(self, path: str, figure : ty.Any, series: str | None = None, step: int | None = None):
-        self.task_logger.report_plotly(path,
-            series if series is not None else "train",
-            figure=figure, iteration=step if step is not None else 0
+        self.task_logger.report_plotly(path + (f"/{series}" if series not None) + (f" - Iteration {step}" if step is not None),
+            "", figure=figure, iteration=step if step is not None else 0
         )
 
     def log_table(self, path: str, table: ty.Any, series: str | None = None, step: int | None = None):
