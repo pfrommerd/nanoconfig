@@ -28,7 +28,7 @@ class Experiment(abc.ABC):
                   step: int | None = None):
         for k, v in utils.flatten_items(result):
             if isinstance(v, Result):
-                v.log(self, path=k, step=step)
+                v.log(self, path=k, step=step, series=series)
             else:
                 raise TypeError(f"Unsupported type {type(v)} for logging")
 
