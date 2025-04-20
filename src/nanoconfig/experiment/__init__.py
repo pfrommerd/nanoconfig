@@ -1,9 +1,14 @@
 import abc
+import torch
 import pandas as pd
 import typing as ty
 import numpy as np
 import functools
 import logging
+import plotly.io as pio
+import io
+
+import PIL.Image as PILImage
 
 from logging import Logger
 from pathlib import Path
@@ -20,7 +25,7 @@ class Experiment(abc.ABC):
     def run(self):
         if not self.main:
             return
-        self.main(self)
+        return self.main(self)
 
     def log(self, result: "NestedResult",
                   path: str | None = None,
@@ -37,8 +42,12 @@ class Experiment(abc.ABC):
                    series: str |None = None, step: int | None = None): ...
 
     @abc.abstractmethod
-    def log_figure(self, path: str, figure: ty.Any | dict,
+    def log_image(self, path: str, image: PILImage.Image | np.ndarray | torch.Tensor,
                    series: str | None = None, step: int | None = None): ...
+
+    @abc.abstractmethod
+    def log_figure(self, path: str, figure: ty.Any | dict,
+                   series: str | None = None, step: int | None = None, static: bool = False): ...
 
     @abc.abstractmethod
     def log_table(self, path: str, table: pd.DataFrame,
@@ -69,7 +78,12 @@ class LocalExperiment(ConsoleMixin, Experiment):
         Experiment.__init__(self, main=main, config=config)
 
     def log_figure(self, path: str, figure: ty.Any | dict,
-                   series: str | None = None, step: int | None = None):
+                   series: str | None = None, step: int | None = None,
+                   static: bool = False):
+        pass
+
+    def log_image(self, path: str, image: PILImage.Image | np.ndarray | torch.Tensor,
+                    series: str | None = None, step: int | None = None):
         pass
 
     def log_table(self, path: str, table: pd.DataFrame,
@@ -101,14 +115,16 @@ class Table(Result):
                              series=series, step=step)
 
 class Figure(Result):
-    def __init__(self, figure):
+    def __init__(self, figure, static = False):
         self.figure = figure
+        self.static = static
 
     def log(self, experiment: Experiment, path: str,
             series: str | None = None, step: int | None = None):
-        experiment.log_figure(path, self.figure,
-                              series=series, step=step)
+        experiment.log_figure(path, self.figure, series=series, step=step, static=self.static)
 
+    def _display_(self):
+        return self.figure
 
 @config
 class ExperimentConfig:
@@ -119,6 +135,7 @@ class ExperimentConfig:
     queue: str = "default"
 
     clearml: bool = False
+    wandb: bool = False
 
     console_intervals: dict[str, int] = field(default_factory=lambda: {
         "train": 100,
@@ -138,6 +155,15 @@ class ExperimentConfig:
             return ClearMLExperiment(
                 project_name=self.project,
                 logger=logger, remote=self.remote,
+                console_intervals=self.console_intervals,
+                main=main,
+                config=config
+            )
+        elif self.wandb:
+            from .wandb import WandbExperiment
+            return WandbExperiment(
+                project_name=self.project,
+                logger=logger,
                 console_intervals=self.console_intervals,
                 main=main,
                 config=config

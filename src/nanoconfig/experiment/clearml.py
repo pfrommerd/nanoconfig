@@ -3,7 +3,12 @@ from .. import Config, utils
 
 from pathlib import Path
 from logging import Logger
+import PIL.Image as PILImage
 
+import io
+import plotly.graph_objects as go
+import numpy as np
+import torch
 import subprocess
 import functools
 import clearml
@@ -31,13 +36,18 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
         self.queue = queue
         self.task : clearml.Task = task if task else clearml.Task.init(
             project_name=project_name,
+            reuse_last_task_id=False,
             auto_connect_arg_parser=False,
+            auto_connect_frameworks=False,
             auto_connect_streams={
                 "stdout": False,
                 "stderr": True,
                 "logging": True
             }
         )
+        self.task.mark_started()
+        if self.logger is not None:
+            self.logger.info(f"Logging to {self.task.get_output_log_web_page()}")
         params = {}
         if self.config is not None:
             params.update({f"General/{k}": v for k, v in
@@ -71,10 +81,8 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
                 queue_name=self.queue,
             )
         else:
-            super().run()
+            return super().run()
 
-    def set_parameters(self, parameters: dict[str, ty.Any]):
-        self.task.set_parameters(parameters)
 
     def log_metric(self, path: str, value: float,
                    series: str | None = None, step: int | None = None):
@@ -84,9 +92,27 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
             iteration=step if step is not None else 0
         )
 
-    def log_figure(self, path: str, figure : ty.Any, series: str | None = None, step: int | None = None):
-        self.task_logger.report_plotly(path + (f" - Iteration {step}" if step is not None else ""),
-            "", figure=figure, iteration=None, series="" if series is None else series
+    def log_figure(self, path: str, figure : ty.Any, series: str | None = None, step: int | None = None,
+                            static: bool = False):
+        if static:
+            img_bytes = PILImage.open(io.BytesIO(figure.to_image(format="jpg")))
+            self.log_image(path, img_bytes, series=series, step=step)
+        else:
+            figure_path = path + (f" - Iteration {step}" if step is not None else "")
+            if isinstance(figure, (go.Figure, dict)):
+                figure = figure.to_plotly_json() if isinstance(figure, go.Figure) else figure
+                self.task_logger._task._reporter.report_plot(
+                    title=figure_path, plot=figure, iter=step or 0, series=series
+                )
+            else:
+                self.task_logger.report_matplotlib_figure(figure_path,
+                    figure=figure, iteration=None, series="" if series is None else series
+                )
+
+    def log_image(self, path: str, image: PILImage.Image | np.ndarray | torch.Tensor,
+                    series: str | None = None, step: int | None = None):
+        self.task_logger.report_image(path,
+            image=image, iteration=step, series=series
         )
 
     def log_table(self, path: str, table: ty.Any, series: str | None = None, step: int | None = None):
