@@ -1,4 +1,5 @@
 import abc
+from attr import dataclass
 import torch
 import pandas as pd
 import typing as ty
@@ -7,15 +8,52 @@ import functools
 import logging
 import plotly.io as pio
 import io
+import contextlib
 
 import PIL.Image as PILImage
 
 from logging import Logger
 from pathlib import Path
+from dataclasses import dataclass
 
 from .. import Config, config, field, utils
 
 class Dummy: ...
+
+@dataclass(frozen=True)
+class ArtifactInfo:
+    name: str
+    type: str
+    version: str
+    digest: str
+
+class Artifact(abc.ABC):
+    def __init__(self, name: str, type: str, version: str,  digest: str):
+        self.name = name
+        self.type = type
+        self.version = version
+        self.digest = digest
+
+    @property
+    def info(self) -> ArtifactInfo:
+        return ArtifactInfo(self.name, self.type, self.version, self.digest)
+#
+    @abc.abstractmethod
+    def open_file(self, path: str) -> ty.ContextManager[io.BufferedReader]:
+        ...
+
+class ArtifactBuilder(abc.ABC):
+    def __init__(self, name: str, type: str):
+        self.name = name
+        self.type = type
+
+    @abc.abstractmethod
+    def create_file(self, name: str) -> ty.ContextManager[io.BufferedWriter]:
+        ...
+
+    @abc.abstractmethod
+    def build(self) -> Artifact:
+        ...
 
 class Experiment(abc.ABC):
     def __init__(self, main: ty.Callable | None, config: Config | None) -> None:
@@ -36,6 +74,18 @@ class Experiment(abc.ABC):
                 v.log(self, path=k, step=step, series=series)
             else:
                 raise TypeError(f"Unsupported type {type(v)} for logging")
+
+    @abc.abstractmethod
+    def find_artifact(self, name: str, type: str | None = None) -> ArtifactInfo | None:
+        ...
+
+    @abc.abstractmethod
+    def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None:
+        ...
+
+    @abc.abstractmethod
+    def create_artifact(self, name: str, type: str) -> ty.ContextManager[ArtifactBuilder]:
+        ...
 
     @abc.abstractmethod
     def log_metric(self, path: str, value: float,
@@ -76,6 +126,16 @@ class LocalExperiment(ConsoleMixin, Experiment):
                     config: Config | None = None):
         ConsoleMixin.__init__(self, logger, console_intervals)
         Experiment.__init__(self, main=main, config=config)
+
+    @contextlib.contextmanager
+    def create_artifact(self, name: str, type: str) -> ty.Iterator[ArtifactBuilder]:
+        yield None # type: ignore
+
+    def find_artifact(self, name: str, type: str | None = None) -> ArtifactInfo | None:
+        pass
+
+    def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None:
+        pass
 
     def log_figure(self, path: str, figure: ty.Any | dict,
                    series: str | None = None, step: int | None = None,
@@ -161,7 +221,7 @@ class ExperimentConfig:
                 console_intervals=self.console_intervals,
                 main=main,
                 config=config
-            )
+            ) # type: ignore
         elif self.wandb:
             from .wandb import WandbExperiment
             return WandbExperiment(

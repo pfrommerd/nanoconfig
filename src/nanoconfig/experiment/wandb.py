@@ -1,18 +1,81 @@
+from pyparsing import C
 import wandb
 import typing as ty
+import os
 import io
 import numpy as np
 import torch
 
+from wandb.sdk import wandb_run
+from wandb.sdk.lib.printer import WARN
 from wandb.sdk.wandb_run import Run as WandbRun
 
 from logging import Logger
+from pathlib import Path
+
 from .. import Config
-from . import ConsoleMixin, Experiment
+from . import ConsoleMixin, Experiment, Artifact, ArtifactBuilder, ArtifactInfo
 
 import PIL.Image as PILImage
 import plotly.graph_objects as go
 import plotly.tools as tls
+import contextlib
+import tempfile
+
+CACHE_DIR = Path.home() / ".cache" / "nanoconfig" / "wandb"
+
+class WandbArtifact(Artifact):
+    def __init__(self, wandb_artifact: wandb.Artifact):
+        super().__init__(
+            name=wandb_artifact.name,
+            type=wandb_artifact.type,
+            version=wandb_artifact.version,
+            digest=wandb_artifact.digest
+        )
+        self.wandb_artifact = wandb_artifact
+
+    @contextlib.contextmanager
+    def open_file(self, path: str) -> ty.Iterator[io.BufferedReader]:
+        entry = self.wandb_artifact.get_entry(path)
+        local_path = entry.download()
+        with open(local_path, "rb") as f:
+            yield f
+
+class WandbArtifactBuilder(ArtifactBuilder):
+    def __init__(self, wandb_artifact: wandb.Artifact, run: WandbRun):
+        super().__init__(
+            name=wandb_artifact.name,
+            type=wandb_artifact.type,
+        )
+        self.wandb_artifact = wandb_artifact
+        self.wandb_run = run
+        self._temporary_files = set()
+        self.result = None
+
+    def _cleanup_temp(self):
+        for file in self._temporary_files:
+            os.remove(file)
+        self._temporary_files.clear()
+
+    @contextlib.contextmanager
+    def create_file(self, name: str):
+        if self.wandb_artifact is None:
+            raise ValueError("WandbArtifact has already been built")
+        local_path = tempfile.mktemp()
+        self._temporary_files.add(local_path)
+        with open(local_path, "wb") as f:
+            yield f
+        self.wandb_artifact.add_file(local_path, name, overwrite=True)
+
+    def build(self) -> WandbArtifact:
+        if self.wandb_artifact is not None:
+            self._cleanup_temp()
+            artifact = self.wandb_run.log_artifact(self.wandb_artifact)
+            artifact.wait()
+            self.result = WandbArtifact(artifact)
+            self.wandb_artifact = None
+        assert self.result is not None
+        return self.result
 
 class WandbExperiment(Experiment, ConsoleMixin):
     def __init__(self, *,
@@ -34,6 +97,38 @@ class WandbExperiment(Experiment, ConsoleMixin):
             name=run_name,
             config=config.to_dict() if config is not None else None
         )
+
+    def find_artifact(self, name: str, type: str | None = None) -> ArtifactInfo | None:
+        artifact = self.wandb_run._public_api().artifact(name, type)
+        if artifact is None:
+            return None
+        name = artifact.name
+        if ":" in name:
+            name, _ = name.split(":")
+        return ArtifactInfo(name, artifact.type, artifact.version, artifact.digest) # type: ignore
+
+    def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None:
+        wandb_artifact = self.wandb_run.use_artifact(
+            f"{artifact.name}:{artifact.version}", artifact.type
+        )
+        name = wandb_artifact.name
+        if ":" in name: name, _ = name.split(":")
+        assert name == artifact.name
+        assert wandb_artifact.type == artifact.type
+        assert wandb_artifact.version == artifact.version
+        assert wandb_artifact.digest == artifact.digest
+        return WandbArtifact(wandb_artifact)
+
+    @contextlib.contextmanager
+    def create_artifact(self, name: str, type: str,
+            aliases: list[str] | None = None) -> ty.Iterator[WandbArtifactBuilder]:
+        wandb_artifact = wandb.Artifact(name, type)
+        builder = WandbArtifactBuilder(wandb_artifact, self.wandb_run)
+        try:
+            yield builder
+        finally:
+            # Ensure the artifact is logged
+            builder.build()
 
     def log_metric(self, path: str, value: float,
                    series: str | None = None, step: int | None = None):

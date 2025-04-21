@@ -13,6 +13,7 @@ import subprocess
 import functools
 import clearml
 import typing as ty
+import contextlib
 
 ####### ClearML Integration #######
 
@@ -83,6 +84,9 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
         else:
             return super().run()
 
+    @contextlib.contextmanager
+    def create_artifact(self, name: str, type: str) -> ty.Iterator[ArtifactBuilder]: # type: ignore
+        yield None # type: ignore
 
     def log_metric(self, path: str, value: float,
                    series: str | None = None, step: int | None = None):
@@ -112,7 +116,7 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
     def log_image(self, path: str, image: PILImage.Image | np.ndarray | torch.Tensor,
                     series: str | None = None, step: int | None = None):
         self.task_logger.report_image(path,
-            image=image, iteration=step, series=series
+            image=image, iteration=step, series=series # type: ignore
         )
 
     def log_table(self, path: str, table: ty.Any, series: str | None = None, step: int | None = None):
