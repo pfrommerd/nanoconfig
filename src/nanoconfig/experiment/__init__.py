@@ -114,6 +114,9 @@ class Table(Result):
         experiment.log_table(path, self.dataframe,
                              series=series, step=step)
 
+    def _display_(self):
+        return self.dataframe
+
 class Figure(Result):
     def __init__(self, figure, static = False):
         self.figure = figure
