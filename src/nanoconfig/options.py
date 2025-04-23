@@ -36,9 +36,9 @@ class Options(ty.Generic[T]):
     opts : list[Option]
 
     @staticmethod
-    def as_options(type: ty.Type[T],
+    def as_options(type: type[T],
                    default: T | Missing = MISSING,
-                   *, prefix : str = "") -> "Options":
+                   *, prefix : str = "") -> "Options[T]":
         return Options(
             type, default,
             list(_as_options(type, default=default, prefix=prefix))
@@ -138,7 +138,7 @@ def _from_parsed_options(options: dict[str, str],
             variant = options.pop(_join(prefix, "type"), MISSING)
             if variant is not MISSING and variant not in type.__variants__:
                 raise OptionParseError(f"Invalid variant {variant} for {type}")
-            config_type = (type.__variants__[variant] 
+            config_type = (type.__variants__[variant]
                            if variant is not MISSING else default_type)
             config_fields = default_type if config_type is MISSING else config_type
             if config_type is MISSING:

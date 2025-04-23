@@ -76,7 +76,7 @@ class Experiment(abc.ABC):
                 raise TypeError(f"Unsupported type {type(v)} for logging")
 
     @abc.abstractmethod
-    def find_artifact(self, name: str, type: str | None = None) -> ArtifactInfo | None:
+    def find_artifact(self, name: str, version: str | None = None, type: str | None = None) -> ArtifactInfo | None:
         ...
 
     @abc.abstractmethod
@@ -131,7 +131,8 @@ class LocalExperiment(ConsoleMixin, Experiment):
     def create_artifact(self, name: str, type: str) -> ty.Iterator[ArtifactBuilder]:
         yield None # type: ignore
 
-    def find_artifact(self, name: str, type: str | None = None) -> ArtifactInfo | None:
+    def find_artifact(self, name: str, version: str | None = None,
+                      type: str | None = None) -> ArtifactInfo | None:
         pass
 
     def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None:

@@ -98,8 +98,10 @@ class WandbExperiment(Experiment, ConsoleMixin):
             config=config.to_dict() if config is not None else None
         )
 
-    def find_artifact(self, name: str, type: str | None = None) -> ArtifactInfo | None:
-        artifact = self.wandb_run._public_api().artifact(name, type)
+    def find_artifact(self, name: str, version: str | None = None,
+                        type: str | None = None) -> ArtifactInfo | None:
+        version = version or "latest"
+        artifact = self.wandb_run._public_api().artifact(f"{name}:{version}", type)
         if artifact is None:
             return None
         name = artifact.name
