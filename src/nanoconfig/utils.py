@@ -2,7 +2,10 @@ import itertools
 import typing as ty
 import collections.abc
 import types
+import requests
+import contextlib
 
+from rich.progress import Progress
 from clearml.automation.optimization import Mapping
 
 def flatten_items(data, prefix=""):
@@ -151,3 +154,27 @@ def parse_value(value: str, type: ty.Type) -> ty.Any:
         return parse_value(value, str)
     else:
         raise ValueError(f"Unsupported type: {type}")
+
+def download_url(path, url, job_name=None, quiet=False, pbar=None, response=None):
+    if path.is_file():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    response = requests.get(url, stream=True) if response is None else response
+    total_size_in_bytes = int(response.headers.get('content-length', 0))
+    block_size = 1024*10 #10 Kibibyte
+    if quiet or pbar is not None:
+        ctx = contextlib.nullcontext()
+    else:
+        ctx = Progress()
+        pbar = ctx
+    with ctx:
+        if pbar:
+            task = pbar.add_task(
+                f"{job_name}" if job_name is not None else "",
+                total=total_size_in_bytes
+            )
+        with open(path, "wb") as f:
+            for data in response.iter_content(block_size):
+                f.write(data)
+                if pbar:
+                    pbar.update(task, advance=len(data)) # type: ignore

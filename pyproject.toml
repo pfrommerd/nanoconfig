@@ -5,9 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fsspec>=2025.3.2",
+    "huggingface-hub>=0.30.2",
     "matplotlib>=3.10.1",
     "pandas>=2.2.3",
     "plotly>=6.0.1",
+    "pyarrow>=19.0.1",
+    "rich>=14.0.0",
     "torch>=2.6.0",
     "wandb[wandb]>=0.19.9",
 ]
@@ -30,4 +34,5 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
+    "torchvision>=0.21.0",
 ]
