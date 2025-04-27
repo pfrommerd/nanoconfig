@@ -22,6 +22,19 @@ import re
 
 logger = logging.getLogger(__name__)
 
+SCHEMA_MIME_TYPES = {
+    "parquet/image+label": pa.schema([
+        pa.field("image", pa.struct([
+            pa.field("bytes", pa.binary()),
+            pa.field("path", pa.string())
+        ])),
+        pa.field("label", pa.int64())
+    ]),
+    "parquet/text": pa.schema([
+        pa.field("text", pa.string()),
+    ])
+}
+
 @dataclass
 class HfDataSource(DataSource):
     repo: str
@@ -76,10 +89,17 @@ class HfDataSource(DataSource):
             if "huggingface" in metadata:
                 del metadata["huggingface"]
         else: metadata = {}
+
         if not "mime_type" in metadata:
-            if self.mime_type is None:
+            if self.mime_type is not None:
+                metadata["mime_type"] = self.mime_type
+            else:
+                for key, value in SCHEMA_MIME_TYPES.items():
+                    if value == schema:
+                        metadata["mime_type"] = key
+                        break
+            if not "mime_type" in metadata:
                 raise ValueError("mime_type is not set")
-            metadata["mime_type"] = self.mime_type
         return FsData(fs, self.sha256, splits, metadata)
 
     @property
