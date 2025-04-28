@@ -10,6 +10,7 @@ from ..utils import download_url
 
 from fsspec.implementations.dirfs import DirFileSystem
 
+import functools
 import pyarrow as pa
 import pyarrow.parquet as pq
 import hashlib
@@ -34,20 +35,31 @@ MIME_TYPE_SCHEMA = {
     ])
 }
 
-SCHEMA_MIME_TYPE_CONVERTERS = {
-    v: (k, lambda x: x)
+def identity_converter(x, mime_type):
+    metadata = {} if x.schema.metadata is None else x.schema.metadata
+    metadata["mime_type"] = mime_type
+    return x.replace_schema_metadata(metadata)
+
+SCHEMA_CONVERTERS : dict[pa.Schema, ty.Callable[[pa.RecordBatch], pa.RecordBatch]] = {
+    v: functools.partial(identity_converter, mime_type=k)
     for k, v in MIME_TYPE_SCHEMA.items()
 }
 
-SCHEMA_MIME_TYPE_CONVERTERS[pa.schema([
+def img_converter(x: pa.RecordBatch) -> pa.RecordBatch:
+    metadata = {} if x.schema.metadata is None else x.schema.metadata
+    metadata["mime_type"] = "parquet/image+label"
+    x = x.rename_columns({
+        "img": "image", "label": "label"
+    })
+    return x.replace_schema_metadata(metadata)
+
+SCHEMA_CONVERTERS[pa.schema([
     pa.field("img", pa.struct([
         pa.field("bytes", pa.binary()),
         pa.field("path", pa.string())
     ])),
     pa.field("label", pa.int64())
-])] = ("parquet/image+label", lambda x: x.rename_columns({
-    "img": "image", "label": "label"
-}))
+])] = img_converter
 
 @dataclass
 class HfDataSource(DataSource):
@@ -105,21 +117,17 @@ class HfDataSource(DataSource):
             for split, split_fragments in splits.items():
                 ds = pq.ParquetDataset(split_fragments, fs)
                 schema = ds.schema
-                mime_type, converter = None, lambda x: x
-                for other_schema, (other_mime_type, other_converter) in SCHEMA_MIME_TYPE_CONVERTERS.items():
+                converter = None
+                for other_schema, other_converter in SCHEMA_CONVERTERS.items():
                     if other_schema == schema:
-                        mime_type, converter = other_mime_type, converter
-                if mime_type is None:
+                        converter = other_converter
+                if converter is None:
                     raise ValueError(f"Unsupported schema: {schema}")
-                # Compute the modified metadata
-                metadata = {} if schema.metadata is None else schema.metadata
-                metadata[b"mime_type"] = mime_type.encode()
 
                 with writer.split(split) as split_writer:
                     for fragment in ds.fragments:
                         for batch in fragment.to_batches():
                             batch = converter(batch)
-                            batch = batch.replace_schema_metadata(metadata)
                             split_writer.write_batch(batch)
         return FsData(fs, self.sha256, splits)
 
