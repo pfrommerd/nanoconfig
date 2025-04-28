@@ -148,8 +148,8 @@ def garbage_collect():
 @click.option("--host", default="127.0.0.1")
 @click.option("--visualizer", default="nanoconfig.data.visualizer:DataVisualizer")
 @click.argument("data")
-@click.command("visualize")
-def visualize_data(data, visualizer, host, port):
+@data.command()
+def visualize(data, visualizer, host, port):
     """Will start a marimo notebook to visualize the data."""
     repo = DataRepository.default()
     data = repo.lookup(data)
@@ -158,9 +158,9 @@ def visualize_data(data, visualizer, host, port):
         return
     DataVisualizer.host_marimo_notebook(host, port, visualizer, data)
 
-@data.command()
 @click.argument('subcommand', default="")
 @click.pass_context
+@data.command()
 def help(ctx, subcommand):
     """Get help for a subcommand"""
     if not subcommand:
