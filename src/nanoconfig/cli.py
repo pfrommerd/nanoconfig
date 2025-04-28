@@ -12,50 +12,68 @@ from fsspec.implementations.local import LocalFileSystem
 
 from .data.generator import GeneratorSource
 from .data.source import DataRepository
-from .data.transform import DataPipeline
+from .data.transform import DataPipeline, SetMimeType
 from .data.fs import FsDataRepository
 from .data.visualizer import DataVisualizer
 from .data.source import DataSource
 
 logger = logging.getLogger(__name__)
 
+
+@click.group()
+def data():
+    setup_logging()
+
 @click.option("--transform", "-t", type=str, multiple=True)
+@click.option("--mime-type", "-m", type=str, default=None)
 @click.argument("args", nargs=-1)
 @click.argument("cmd", type=str)
 @click.argument("name", type=str)
-@click.command("generate")
-def generate_data(name, cmd, args, transform):
+@data.command()
+def generate(name, cmd, args, transform, mime_type):
+    """Generate data using a command."""
     source = GeneratorSource.from_command(cmd, *args)
-    if transform:
-        source = DataPipeline(source, *_parse_transforms(transform))
+    transforms = _parse_transforms(transform)
+    if mime_type:
+        transforms.append(SetMimeType(mime_type))
+    if transforms: source = DataPipeline(source, *transforms)
     repo = DataRepository.default()
     if repo.lookup(source) is not None:
         repo.register(name, source.sha256)
-        logger.info(f"Data already exists: {source.sha256}")
+        rich.print(f"Data already exists: [blue]{source.sha256}[/blue]")
     else:
         data = repo.get(source)
         repo.register(name, data)
-        logger.info(f"Generated data: {data.sha256}")
+        rich.print(f"Generated data: [blue]{data.sha256}[/blue]")
+    rich.print("="*80)
+    info.callback(name) # type: ignore
 
 @click.option("--transform", "-t", type=str, multiple=True)
+@click.option("--mime-type", "-m", type=str, default=None)
 @click.argument("url", type=str)
 @click.argument("name", type=str)
-@click.command("pull")
-def pull_data(name, url, transform):
+@data.command()
+def pull(name, url, transform, mime_type):
+    """Fetch data from a remote source."""
     source = DataSource.from_url(url)
-    if transform:
-        source = DataPipeline(source, *_parse_transforms(transform))
+    transforms = _parse_transforms(transform)
+    if mime_type:
+        transforms.append(SetMimeType(mime_type))
+    if transforms: source = DataPipeline(source, *transforms)
     repo = DataRepository.default()
     if repo.lookup(source) is not None:
         repo.register(name, source.sha256)
-        logger.info(f"Data already exists: {source.sha256}")
+        rich.print(f"Using cached data: [blue]{source.sha256}[/blue]")
     else:
         data = repo.get(source)
         repo.register(name, data)
-        logger.info(f"Pulled data: {data.sha256}")
+        rich.print(f"Pulled data: [blue]{data.sha256}[/blue]")
+    rich.print("="*80)
+    info.callback(name) # type: ignore
 
-@click.command("list")
-def list_data():
+@data.command("list")
+def list_():
+    """List all registered data keys."""
     repo = DataRepository.default()
     keys = repo.keys()
     if isinstance(repo, FsDataRepository) and \
@@ -67,13 +85,35 @@ def list_data():
     for key in keys:
         data = repo.lookup(key)
         if data is not None:
-            rich.print(f"  [green]{key}[/green]: {data.sha256}")
+            rich.print(f"  [green]{key}[/green]: [blue]{data.sha256}[/blue]")
             for split_info in data.split_infos().values():
                 rich.print(f"    - [yellow]{split_info.name}[/yellow]: {split_info.size} ({split_info.mime_type})")
 
+data.add_command(list_, name="ls")
+
+@click.argument("name")
+@data.command()
+def info(name):
+    """Get detailed schema information about a dataset."""
+    repo = DataRepository.default()
+    data = repo.lookup(name)
+    if data is None:
+        rich.print(f"Data not found: {name}")
+        return
+    rich.print(f"[green]{name}[/green]: [blue]{data.sha256}[/blue]")
+    for split_info in data.split_infos().values():
+        rich.print(f"  [yellow]{split_info.name}[/yellow]: {split_info.size} ({split_info.mime_type})")
+        schema = split_info.schema
+        for field, field_type in zip(schema.names, schema.types):
+            rich.print(f"    - [blue]{field}[/blue]: {field_type}")
+
 @click.argument("keys", nargs=-1)
-@click.command("rm")
-def remove_data(keys):
+@data.command()
+def remove(keys):
+    """
+    Remove specified keys from the repository.
+    Use the 'gc' command to then physically remove the data.
+    """
     repo = DataRepository.default()
     for key in keys:
         data = repo.lookup(key)
@@ -82,8 +122,27 @@ def remove_data(keys):
             return
     for key in keys:
         repo.deregister(key)
-    repo.gc()
     rich.print(f"{" ".join(keys)}")
+# Add under an alias
+data.add_command(remove, name="rm")
+
+@data.command("purge")
+def purge_data():
+    """Remove all data from the repository."""
+    repo = DataRepository.default()
+    for key in repo.keys():
+        repo.deregister(key)
+    repo.gc()
+    rich.print("All data purged.")
+
+@data.command("gc")
+def garbage_collect():
+    """Remove unused data from the repository."""
+    repo = DataRepository.default()
+    removed = repo.gc()
+    rich.print("Garbage collection complete")
+    for sha in removed:
+        rich.print(f"  Removed: [blue]{sha}[/blue]")
 
 @click.option("--port", default=8000)
 @click.option("--host", default="127.0.0.1")
@@ -91,6 +150,7 @@ def remove_data(keys):
 @click.argument("data")
 @click.command("visualize")
 def visualize_data(data, visualizer, host, port):
+    """Will start a marimo notebook to visualize the data."""
     repo = DataRepository.default()
     data = repo.lookup(data)
     if data is None:
@@ -98,15 +158,23 @@ def visualize_data(data, visualizer, host, port):
         return
     DataVisualizer.host_marimo_notebook(host, port, visualizer, data)
 
-@click.group()
-def data():
-    setup_logging()
-
-data.add_command(list_data)
-data.add_command(pull_data)
-data.add_command(remove_data)
-data.add_command(generate_data)
-data.add_command(visualize_data)
+@data.command()
+@click.argument('subcommand', default="")
+@click.pass_context
+def help(ctx, subcommand):
+    """Get help for a subcommand"""
+    if not subcommand:
+        click.echo("Available commands:")
+        for command in data.commands:
+            click.echo(f"  {command}")
+        return
+    else:
+        cmd = data.get_command(ctx, subcommand)
+        ctx.info_name = subcommand
+        if cmd is None:
+            click.echo(f"Unrecognized command: {subcommand}")
+        else:
+            click.echo(cmd.get_help(ctx))
 
 class CustomLogRender(rich._log_render.LogRender): # type: ignore
     def __call__(self, *args, **kwargs):

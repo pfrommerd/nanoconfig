@@ -163,7 +163,7 @@ class FsDataRepository(DataRepository):
                 self._aliases = json.load(f)
 
     def keys(self) -> ty.Iterable[str]:
-        return self._aliases.keys()
+        return list(self._aliases.keys())
 
     def register(self, alias: str, sha: str | Data | DataSource):
         if not isinstance(sha, str):
@@ -182,11 +182,14 @@ class FsDataRepository(DataRepository):
         with self.fs.open("registry.json", "w") as f:
             json.dump(self._aliases, f)
 
-    def gc(self):
+    def gc(self) -> set[str]:
+        removed = set()
         shas = set(self._aliases.values())
         for sha in self.fs.listdir("/", detail=False):
-            if sha not in shas and sha != "registery.json":
+            if sha not in shas and sha != "registry.json":
+                removed.add(sha)
                 self.fs.rm(sha, recursive=True)
+        return removed
 
     def lookup(self, alias_or_sha: str | Data | DataSource) -> Data | None:
         if not isinstance(alias_or_sha, str):

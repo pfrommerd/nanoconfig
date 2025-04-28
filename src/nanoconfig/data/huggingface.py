@@ -114,26 +114,10 @@ class HfDataSource(DataSource):
         data = repo.lookup(self.sha256)
         if data is not None:
             return data
-
         info = hf.dataset_info(self.repo, revision=self.rev)
         root_fs = hf.HfFileSystem()
         fs = DirFileSystem(PurePath("datasets") / f"{info.id}@{self.rev}", root_fs)
         splits = _hf_collect_split_files(fs, self.subset)
-        logger.info(f"Using data from {info.id}")
-        logger.info(f"  downloads (30 days) : {info.downloads}")
-        logger.info(f"  hash                : {info.sha}")
-        for split, files in splits.items():
-            logger.info(f"Split: {split}")
-            for file in files:
-                logger.info(f"  {file}")
-        logger.info(f"Using data from {info.id}")
-        logger.info(f"  downloads (30 days) : {info.downloads}")
-        logger.info(f"  hash                : {info.sha}")
-        for split, files in splits.items():
-            logger.info(f"Split: {split}")
-            for file in files:
-                logger.info(f"  {file}")
-
         with repo.initialize(self.sha256) as writer:
             for split, split_fragments in splits.items():
                 ds = pq.ParquetDataset(split_fragments, fs)

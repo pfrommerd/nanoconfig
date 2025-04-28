@@ -109,7 +109,7 @@ class DataRepository(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def gc(self):
+    def gc(self) -> set[str]:
         pass
 
     @abc.abstractmethod
