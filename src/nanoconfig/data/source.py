@@ -88,9 +88,8 @@ class DataWriter(abc.ABC):
             with self.split(split.name) as split_writer:
                 ds = data.split(split.name)
                 assert ds is not None
-                for fragment in ds.fragments:
-                    for batch in fragment.to_batches(ds.schema):
-                        split_writer.write_batch(batch)
+                for batch in ds.to_batches():
+                    split_writer.write_batch(batch)
 
     @abc.abstractmethod
     def close(self) -> Data:
@@ -110,6 +109,10 @@ class DataRepository(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def gc(self):
+        pass
+
+    @abc.abstractmethod
     def lookup(self, alias_or_sha: str | Data | DataSource) -> Data | None:
         pass
 
@@ -118,7 +121,7 @@ class DataRepository(abc.ABC):
     def initialize(self, data_sha: str) -> ty.Iterator[DataWriter]:
         pass
 
-    def get(self, source: str | DataSource) -> Data:
+    def get(self, source: str | Data | DataSource) -> Data:
         if isinstance(source, str):
             data = self.lookup(source)
         else:
@@ -127,8 +130,11 @@ class DataRepository(abc.ABC):
             return data
         if isinstance(source, str):
             raise ValueError(f"Data not found for alias '{source}'")
-        data = source.prepare(self)
-        assert data.sha256 == source.sha256
+        elif isinstance(source, DataSource):
+            data = source.prepare(self)
+            assert data.sha256 == source.sha256
+        else:
+            data = source
         if self.lookup(data.sha256) is None:
             with self.initialize(data.sha256) as writer:
                 writer.write(data)

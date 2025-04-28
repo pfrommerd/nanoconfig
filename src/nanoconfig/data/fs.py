@@ -62,7 +62,7 @@ class FsData(Data):
         ds = pq.ParquetDataset(fragments, filesystem=self._fs)
         if adapters:
             return adapters(ds)
-        return ds
+        return ds._dataset
 
     @property
     def aux(self) -> AbstractFileSystem:
@@ -181,6 +181,12 @@ class FsDataRepository(DataRepository):
         del self._aliases[alias]
         with self.fs.open("registry.json", "w") as f:
             json.dump(self._aliases, f)
+
+    def gc(self):
+        shas = set(self._aliases.values())
+        for sha in self.fs.listdir("/", detail=False):
+            if sha not in shas and sha != "registery.json":
+                self.fs.rm(sha, recursive=True)
 
     def lookup(self, alias_or_sha: str | Data | DataSource) -> Data | None:
         if not isinstance(alias_or_sha, str):

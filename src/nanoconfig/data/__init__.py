@@ -24,12 +24,6 @@ class SplitInfo:
     schema: pa.Schema
 
     @property
-    def metadata(self) -> dict[str, Metadata]:
-        return {
-            k: json.loads(v) for k, v in self.schema.metadata.items()
-        }
-
-    @property
     def mime_type(self) -> str:
         return self.schema.metadata.get(b"mime_type", b"unknown").decode("utf-8")
 

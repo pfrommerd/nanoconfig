@@ -62,9 +62,23 @@ def list_data():
             for split_info in data.split_infos().values():
                 rich.print(f"    - [yellow]{split_info.name}[/yellow]: {split_info.size} ({split_info.mime_type})")
 
+@click.argument("keys", nargs=-1)
+@click.command("rm")
+def remove_data(keys):
+    repo = DataRepository.default()
+    for key in keys:
+        data = repo.lookup(key)
+        if data is None:
+            rich.print(f"Data not found: {key}")
+            return
+    for key in keys:
+        repo.deregister(key)
+    repo.gc()
+    rich.print(f"{" ".join(keys)}")
+
 @click.option("--port", default=8000)
 @click.option("--host", default="127.0.0.1")
-@click.option("--visualizer", default="nanoconfig.data.visualizer:default_visualizer")
+@click.option("--visualizer", default="nanoconfig.data.visualizer:DataVisualizer")
 @click.argument("data")
 @click.command("visualize")
 def visualize_data(data, visualizer, host, port):
@@ -72,9 +86,6 @@ def visualize_data(data, visualizer, host, port):
     data = repo.lookup(data)
     if data is None:
         rich.print(f"Data not found: {data}")
-        return
-    if not ":" in visualizer:
-        rich.print(f"Invalid visualizer format, must contain ':' separator: {visualizer}")
         return
     DataVisualizer.host_marimo_notebook(host, port, visualizer, data)
 
@@ -84,6 +95,7 @@ def data():
 
 data.add_command(list_data)
 data.add_command(pull_data)
+data.add_command(remove_data)
 data.add_command(generate_data)
 data.add_command(visualize_data)
 

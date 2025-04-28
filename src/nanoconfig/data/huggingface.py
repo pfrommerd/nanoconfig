@@ -19,6 +19,7 @@ import logging
 import itertools
 import typing as ty
 import re
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,8 @@ MIME_TYPE_SCHEMA = {
 
 def identity_converter(x, mime_type):
     metadata = {} if x.schema.metadata is None else x.schema.metadata
+    if "huggingface" in metadata:
+        del metadata["huggingface"]
     metadata["mime_type"] = mime_type
     return x.replace_schema_metadata(metadata)
 
@@ -45,12 +48,20 @@ SCHEMA_CONVERTERS : dict[pa.Schema, ty.Callable[[pa.RecordBatch], pa.RecordBatch
     for k, v in MIME_TYPE_SCHEMA.items()
 }
 
-def img_converter(x: pa.RecordBatch) -> pa.RecordBatch:
+def image_label_converter(x: pa.RecordBatch, image_column: str, label_column: str) -> pa.RecordBatch:
     metadata = {} if x.schema.metadata is None else x.schema.metadata
+    labels = {}
+    if b"huggingface" in metadata:
+        classes = (json.loads(metadata[b"huggingface"]).get("info", {}).get("features", {})
+                .get("label", {}).get("names", {}))
+        if classes:
+            metadata["classes"] = json.dumps(classes)
+        del metadata[b"huggingface"]
     metadata["mime_type"] = "parquet/image+label"
-    x = x.rename_columns({
-        "img": "image", "label": "label"
-    })
+    if image_column != "image" or label_column != "label":
+        x = x.rename_columns({
+            image_column: "image", label_column: "label"
+        })
     return x.replace_schema_metadata(metadata)
 
 SCHEMA_CONVERTERS[pa.schema([
@@ -59,7 +70,13 @@ SCHEMA_CONVERTERS[pa.schema([
         pa.field("path", pa.string())
     ])),
     pa.field("label", pa.int64())
-])] = img_converter
+])] = functools.partial(
+    image_label_converter, image_column="img", label_column="label"
+)
+# Override so that we get the label metadata
+SCHEMA_CONVERTERS[MIME_TYPE_SCHEMA["parquet/image+label"]] = functools.partial(
+    image_label_converter, image_column="image", label_column="label"
+)
 
 @dataclass
 class HfDataSource(DataSource):
@@ -117,13 +134,14 @@ class HfDataSource(DataSource):
             for split, split_fragments in splits.items():
                 ds = pq.ParquetDataset(split_fragments, fs)
                 schema = ds.schema
-                converter = None
-                for other_schema, other_converter in SCHEMA_CONVERTERS.items():
-                    if other_schema == schema:
-                        converter = other_converter
-                if converter is None:
-                    raise ValueError(f"Unsupported schema: {schema}")
-
+                converter = lambda x: x
+                if not schema.metadata.get("mime_type", None):
+                    converter = None
+                    for other_schema, other_converter in SCHEMA_CONVERTERS.items():
+                        if other_schema == schema:
+                            converter = other_converter
+                    if converter is None:
+                        raise ValueError(f"Unsupported schema: {schema}")
                 with writer.split(split) as split_writer:
                     for fragment in ds.fragments:
                         for batch in fragment.to_batches():

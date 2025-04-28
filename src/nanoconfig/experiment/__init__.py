@@ -1,5 +1,4 @@
 import abc
-from attr import dataclass
 import torch
 import pandas as pd
 import typing as ty
