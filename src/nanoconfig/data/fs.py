@@ -13,19 +13,16 @@ import itertools
 import typing as ty
 import contextlib
 import pyarrow as pa
+import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
 T = ty.TypeVar("T")
 
 class FsData(Data):
     def __init__(self, fs: AbstractFileSystem, sha: str,
-                split_fragments: dict[str, list[str]] | None = None,
-                # To override the underlying schema metadata
-                metadata: dict[str, ty.Any] | None = None):
+                    split_fragments: dict[str, list[str]] | None = None):
         self._fs = fs
         self._sha = sha
-        self._metadata = metadata
-
         if split_fragments is None:
             split_fragments = {}
             data_fragment = None
@@ -51,26 +48,18 @@ class FsData(Data):
         fragments = self._split_fragments[name]
         # open the dataset to find the schema
         ds = pq.ParquetDataset(fragments, filesystem=self._fs)
-        schema = ds.schema
-        if self._metadata is not None:
-            schema = schema.with_metadata({
-                k.encode("utf-8"): v.encode("utf-8") for k, v in self._metadata.items()
-            })
         return SplitInfo(
             name=name,
             size=sum(f.count_rows() for f in ds.fragments),
             content_size=sum(f.count_rows() for f in ds.fragments),
-            schema=schema
+            schema=ds.schema
         )
 
-    def split(self, name: str, adapters: DataAdapter[T] | None = None):
+    def split(self, name: str, adapters: DataAdapter[T] | None = None) -> ds.Dataset | T | None:
         if not name in self._split_fragments:
-            raise ValueError(f"Split {name} does not exist")
+            return None
         fragments = self._split_fragments[name]
         ds = pq.ParquetDataset(fragments, filesystem=self._fs)
-        if self._metadata is not None:
-            schema = ds.schema.with_metadata(self._metadata)
-            ds = pq.ParquetDataset(fragments, schema=schema, filesystem=self._fs)
         if adapters:
             return adapters(ds)
         return ds
@@ -88,7 +77,7 @@ DEFAULT_LOCAL_DATA = Path.home() / ".cache" / "nanodata"
 # 128 Mb per file
 MAX_FILE_SIZE = 128 * 1024 * 1024 * 1024
 
-class LocalSplitWriter(SplitWriter):
+class FsSplitWriter(SplitWriter):
     def __init__(self, fs: AbstractFileSystem, name: str):
         self._fs = fs
         self._name = name
@@ -97,10 +86,11 @@ class LocalSplitWriter(SplitWriter):
         self._schema = None
         self._current_file = None
         self._current_writer = None
+        self._current_size = 0
 
     def _check_writer(self):
         """Check if the current shard needs to be closed and a new one created."""
-        if self._current_file and self._current_file.size() > MAX_FILE_SIZE:
+        if self._current_file and self._current_size > MAX_FILE_SIZE:
             assert self._current_writer is not None
             self._current_writer.close()
             self._current_file.close()
@@ -109,11 +99,12 @@ class LocalSplitWriter(SplitWriter):
         if not self._current_file or not self._current_writer:
             self._num_parts += 1
             self._current_file = pa.PythonFile(
-                self._fs.open(PurePath(self._name) / f"part-{self._num_parts:05d}.parquet", 'wb')
+                self._fs.open(str(PurePath(self._name) / f"{self._name}-{self._num_parts:05d}.parquet"), 'wb')
             )
             self._current_writer = pq.ParquetWriter(
                 self._current_file, self._schema
             )
+            self._current_size = 0
 
     def write_batch(self, batch: pa.RecordBatch):
         if not self._schema:
@@ -123,6 +114,7 @@ class LocalSplitWriter(SplitWriter):
         self._check_writer()
         assert self._current_writer is not None
         self._current_writer.write_batch(batch)
+        self._current_size += batch.nbytes
 
     def close(self):
         if self._current_writer:
@@ -131,16 +123,19 @@ class LocalSplitWriter(SplitWriter):
             self._current_file.close()
 
 class FsDataWriter(DataWriter):
-    def __init__(self, fs: AbstractFileSystem):
+    def __init__(self, fs: AbstractFileSystem | Path | str, sha: str):
+        if isinstance(fs, (str, Path)):
+            fs = DirFileSystem(str(fs), LocalFileSystem())
         self._fs = fs
+        self._sha = sha
 
     @ty.override
     @contextlib.contextmanager
-    def split(self, name: str) -> ty.Iterator[LocalSplitWriter]:
+    def split(self, name: str) -> ty.Iterator[FsSplitWriter]:
         if self._fs.exists(name):
             raise FileExistsError(f"Split '{name}' already exists")
         self._fs.mkdir(name)
-        writer = LocalSplitWriter(self._fs, name)
+        writer = FsSplitWriter(self._fs, name)
         yield writer
         writer.close()
 
@@ -151,47 +146,71 @@ class FsDataWriter(DataWriter):
             self._fs.mkdir("aux")
         yield DirFileSystem("aux", self._fs)
 
+    @ty.override
+    def close(self) -> Data:
+        return FsData(self._fs, self._sha)
+
 class FsDataRepository(DataRepository):
     def __init__(self, fs: AbstractFileSystem | Path | str | None = None):
         if fs is None:
             fs = DirFileSystem(DEFAULT_LOCAL_DATA, LocalFileSystem())
         elif isinstance(fs, (str, Path)):
             fs = DirFileSystem(fs, LocalFileSystem())
-        self._fs = fs
+        self.fs = fs
         self._aliases = {}
-        if self._fs.exists('registry.json'):
-            with self._fs.open("registry.json") as f:
+        if self.fs.exists('registry.json'):
+            with self.fs.open("registry.json") as f:
                 self._aliases = json.load(f)
 
     def keys(self) -> ty.Iterable[str]:
         return self._aliases.keys()
 
-    def register(self, alias: str, sha: str):
-        if alias in self._aliases:
-            raise ValueError(f"Alias '{alias}' already exists")
-        if not self._fs.exists(sha):
+    def register(self, alias: str, sha: str | Data | DataSource):
+        if not isinstance(sha, str):
+            sha = sha.sha256
+        if not self.fs.exists(sha):
             raise FileNotFoundError(f"Data '{sha}' not found")
         # Register the alias
         self._aliases[alias] = sha
-        with self._fs.open("registry.json", "w") as f:
+        with self.fs.open("registry.json", "w") as f:
             json.dump(self._aliases, f)
 
     def deregister(self, alias: str):
         if alias not in self._aliases:
             return
         del self._aliases[alias]
-        with self._fs.open("registry.json", "w") as f:
+        with self.fs.open("registry.json", "w") as f:
             json.dump(self._aliases, f)
 
-    def lookup(self, alias_or_sha: str) -> Data:
-        sha = self._aliases.get(alias_or_sha, alias_or_sha)
-        if not self._fs.exists(alias_or_sha):
-            raise FileNotFoundError(f"Data '{alias_or_sha}' not found")
-        return FsData(DirFileSystem(PurePath(sha), self._fs), sha)
+    def lookup(self, alias_or_sha: str | Data | DataSource) -> Data | None:
+        if not isinstance(alias_or_sha, str):
+            sha = alias_or_sha.sha256
+        else:
+            sha = self._aliases.get(alias_or_sha, alias_or_sha)
+        if not self.fs.exists(sha):
+            return None
+        return FsData(DirFileSystem(PurePath(sha), self.fs), sha)
 
     @contextlib.contextmanager
     def initialize(self, data_sha: str) -> ty.Iterator[FsDataWriter]:
-        if self._fs.exists(data_sha):
+        if self.fs.exists(data_sha):
             raise FileExistsError(f"Data '{data_sha}' already exists")
-        self._fs.mkdir(data_sha)
-        yield FsDataWriter(DirFileSystem(PurePath(data_sha), self._fs))
+        self.fs.mkdir(data_sha)
+        yield FsDataWriter(DirFileSystem(data_sha, self.fs), data_sha)
+
+class FsDataSource(DataSource):
+    def __init__(self, fs: AbstractFileSystem, sha: str):
+        self.fs = fs
+        self._sha = sha
+
+    def prepare(self, repo: "DataRepository | None" = None) -> Data:
+        return FsData(self.fs, self._sha)
+
+    @property
+    def sha256(self) -> str:
+        return self._sha
+
+    @staticmethod
+    def from_path(path: str | Path, sha: str):
+        fs = DirFileSystem(str(path), LocalFileSystem())
+        return FsDataSource(fs, sha)

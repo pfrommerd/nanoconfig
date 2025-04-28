@@ -52,9 +52,10 @@ def test_torch_data():
     adapter.register_type("parquet/image+label", convert_image)
     mnist_data = HfDataSource.from_repo("ylecun/mnist").prepare()
     train_data = mnist_data.split("train", adapter)
+    assert train_data is not None
     assert len(train_data) == 60000
 
-def test_data_loader():
+def test_memory_data_loader():
     data = pa.Table.from_pylist([
         {"data": 2},
         {"data": 4},

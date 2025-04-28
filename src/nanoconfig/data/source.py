@@ -1,5 +1,9 @@
 import abc
-from fsspec.asyn import AbstractFileSystem
+
+from fsspec import AbstractFileSystem
+from fsspec.implementations.local import LocalFileSystem
+from fsspec.implementations.dirfs import DirFileSystem
+
 import huggingface_hub as hf
 import hashlib
 import logging
@@ -19,6 +23,8 @@ from rich.progress import Progress
 
 from . import Data
 
+import urllib.parse
+
 logger = logging.getLogger(__name__)
 
 class DataSource(abc.ABC):
@@ -30,6 +36,35 @@ class DataSource(abc.ABC):
     @abc.abstractmethod
     def sha256(self) -> str:
         pass
+
+    @staticmethod
+    def from_url(url: str) -> "DataSource":
+        parsed = urllib.parse.urlparse(url)
+        query_params = urllib.parse.parse_qs(parsed.query)
+        if parsed.scheme == "file":
+            from .fs import FsDataSource
+            path = parsed.netloc + parsed.path
+            sha = query_params.get("sha", [None])[0]
+            if sha is None:
+                raise ValueError("Missing sha parameter to file data url.")
+            return FsDataSource.from_path(path, sha)
+        elif parsed.scheme == "hf":
+            from .huggingface import HfDataSource
+            repo = parsed.netloc + parsed.path
+            repo_parts = repo.split("/")
+            if len(repo_parts) < 1:
+                raise ValueError(f"Invalid repository format: {repo}")
+            repo = repo_parts[0] + "/" + repo_parts[1]
+            subset = "/".join(repo_parts[2:]) if len(repo_parts) > 2 else None
+            rev = parsed.fragment if parsed.fragment else None
+            return HfDataSource.from_repo(repo, subset, rev)
+        elif parsed.scheme == "gen":
+            from .generator import GeneratorSource
+            exec = parsed.netloc + parsed.path
+            args = [f"--{k}={v}" for k,v in query_params.items()]
+            return GeneratorSource.from_command(exec, *args)
+        else:
+            raise ValueError(f"Unsupported scheme: {parsed.scheme}")
 
 class SplitWriter(abc.ABC):
     @abc.abstractmethod
@@ -50,9 +85,16 @@ class DataWriter(abc.ABC):
     # by subclasses to implement more efficient copying.
     def write(self, data: Data):
         for split in data.split_infos().values():
-            ds = data.split(split.name)
-            for batch in ds.to_batches():
-                pass
+            with self.split(split.name) as split_writer:
+                ds = data.split(split.name)
+                assert ds is not None
+                for fragment in ds.fragments:
+                    for batch in fragment.to_batches(ds.schema):
+                        split_writer.write_batch(batch)
+
+    @abc.abstractmethod
+    def close(self) -> Data:
+        pass
 
 class DataRepository(abc.ABC):
     @abc.abstractmethod
@@ -60,7 +102,7 @@ class DataRepository(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def register(self, alias: str, sha: str):
+    def register(self, alias: str, sha: str | Data | DataSource):
         pass
 
     @abc.abstractmethod
@@ -68,7 +110,7 @@ class DataRepository(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def lookup(self, alias_or_sha: str) -> Data | None:
+    def lookup(self, alias_or_sha: str | Data | DataSource) -> Data | None:
         pass
 
     @abc.abstractmethod
@@ -76,7 +118,7 @@ class DataRepository(abc.ABC):
     def initialize(self, data_sha: str) -> ty.Iterator[DataWriter]:
         pass
 
-    def fetch(self, source: str | DataSource) -> Data:
+    def get(self, source: str | DataSource) -> Data:
         if isinstance(source, str):
             data = self.lookup(source)
         else:
@@ -90,8 +132,9 @@ class DataRepository(abc.ABC):
         if self.lookup(data.sha256) is None:
             with self.initialize(data.sha256) as writer:
                 writer.write(data)
-            data = self.lookup(data.sha256)
             assert data is not None
+        data = self.lookup(data.sha256)
+        assert data is not None
         return data
 
     @staticmethod

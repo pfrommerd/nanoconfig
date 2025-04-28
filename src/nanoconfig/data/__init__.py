@@ -1,4 +1,3 @@
-from re import A
 from dataclasses import dataclass
 from fsspec.asyn import AbstractFileSystem
 from torch.utils.data import Dataset as TorchDataset
@@ -11,7 +10,6 @@ import pyarrow as pa
 import abc
 import io
 import typing as ty
-
 
 Metadata : ty.TypeAlias = (
     dict[str, "Metadata"] | list["Metadata"]
@@ -33,7 +31,7 @@ class SplitInfo:
 
     @property
     def mime_type(self) -> str:
-        return self.schema.metadata.get(b"mime_type").decode("utf-8")
+        return self.schema.metadata.get(b"mime_type", b"unknown").decode("utf-8")
 
 T = ty.TypeVar("T", covariant=True)
 class DataAdapter(ty.Protocol[T]):
@@ -50,9 +48,9 @@ class Data(abc.ABC):
         pass
 
     @ty.overload
-    def split(self, name: str, adapters: DataAdapter[T]) -> T: ...
+    def split(self, name: str, adapters: DataAdapter[T]) -> T | None: ...
     @ty.overload
-    def split(self, name: str, adapters: "None" = None) -> ds.Dataset: ...
+    def split(self, name: str, adapters: "None" = None) -> ds.Dataset | None: ...
 
     @abc.abstractmethod
     def split(self, name: str, adapters: "DataAdapter[T] | None" = None) -> T | ds.Dataset:

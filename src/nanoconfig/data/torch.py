@@ -20,6 +20,10 @@ class SizedDataset(Dataset[T], ty.Generic[T], ty.Sized):
                 shuffle: bool = False) -> DataLoader[T]:
         ...
 
+    @abc.abstractmethod
+    def head(self, n: int) -> T:
+        ...
+
     @property
     @abc.abstractmethod
     def data_sample(self) -> T:
@@ -44,6 +48,9 @@ class StreamingDataset(IterableDataset[T], SizedDataset[T], ty.Generic[T]):
         self._data_sample = _data_sample
         self._batch_size = batch_size
         self._shuffle = shuffle
+
+    def head(self, n: int) -> T:
+        return self._converter(self._data.head(n).to_batches()[0])
 
     @property
     def data_sample(self) -> T:
@@ -83,6 +90,9 @@ class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
 
     def loader(self, batch_size: int, *, shuffle: bool = True) -> DataLoader[T]:
         return DataLoader(self, batch_size=batch_size, shuffle=shuffle)
+
+    def head(self, n: int) -> T:
+        return pytree.tree_map(lambda x: x[:n], self._data)
 
     @property
     def data_sample(self) -> T:
