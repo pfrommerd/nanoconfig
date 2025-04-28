@@ -109,6 +109,12 @@ class HfDataSource(DataSource):
 
     @ty.override
     def prepare(self, repo: DataRepository | None = None) -> Data:
+        if repo is None:
+            repo = DataRepository.default()
+        data = repo.lookup(self.sha256)
+        if data is not None:
+            return data
+
         info = hf.dataset_info(self.repo, revision=self.rev)
         root_fs = hf.HfFileSystem()
         fs = DirFileSystem(PurePath("datasets") / f"{info.id}@{self.rev}", root_fs)
@@ -128,8 +134,6 @@ class HfDataSource(DataSource):
             for file in files:
                 logger.info(f"  {file}")
 
-        if repo is None:
-            repo = DataRepository.default()
         with repo.initialize(self.sha256) as writer:
             for split, split_fragments in splits.items():
                 ds = pq.ParquetDataset(split_fragments, fs)

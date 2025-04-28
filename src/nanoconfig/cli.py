@@ -3,6 +3,8 @@ import click
 import logging
 import rich
 import tempfile
+import json
+import importlib
 
 from rich.logging import RichHandler
 from fsspec.implementations.dirfs import DirFileSystem
@@ -10,18 +12,22 @@ from fsspec.implementations.local import LocalFileSystem
 
 from .data.generator import GeneratorSource
 from .data.source import DataRepository
+from .data.transform import DataPipeline
 from .data.fs import FsDataRepository
 from .data.visualizer import DataVisualizer
 from .data.source import DataSource
 
 logger = logging.getLogger(__name__)
 
+@click.option("--transform", "-t", type=str, multiple=True)
 @click.argument("args", nargs=-1)
 @click.argument("cmd", type=str)
 @click.argument("name", type=str)
 @click.command("generate")
-def generate_data(name, cmd, args):
+def generate_data(name, cmd, args, transform):
     source = GeneratorSource.from_command(cmd, *args)
+    if transform:
+        source = DataPipeline(source, *_parse_transforms(transform))
     repo = DataRepository.default()
     if repo.lookup(source) is not None:
         repo.register(name, source.sha256)
@@ -31,11 +37,14 @@ def generate_data(name, cmd, args):
         repo.register(name, data)
         logger.info(f"Generated data: {data.sha256}")
 
+@click.option("--transform", "-t", type=str, multiple=True)
 @click.argument("url", type=str)
 @click.argument("name", type=str)
 @click.command("pull")
-def pull_data(name, url):
+def pull_data(name, url, transform):
     source = DataSource.from_url(url)
+    if transform:
+        source = DataPipeline(source, *_parse_transforms(transform))
     repo = DataRepository.default()
     if repo.lookup(source) is not None:
         repo.register(name, source.sha256)
@@ -136,3 +145,25 @@ def setup_logging(show_path=False):
         datefmt="[%X]",
         handlers=[handler]
     )
+
+def _parse_transforms(transforms: list[str]):
+    def _parse(t: str):
+        idx = t.find("(")
+        if idx >= 0:
+            base, args = t[:idx], t[idx+1:-1]
+            args = json.loads(f"[{args}]")
+        else:
+            base, args = t, None
+        idx = base.rfind(".")
+        if idx >= 0:
+            module = base[:idx]
+            name = base[idx+1:]
+        else:
+            module = "nanoconfig.data.transform"
+            name = base
+        transform = getattr(importlib.import_module(module), name)
+        if args is None:
+            return transform
+        else:
+            return transform(*args)
+    return [_parse(t.strip()) for t in transforms]
