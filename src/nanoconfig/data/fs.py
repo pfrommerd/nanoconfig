@@ -59,10 +59,10 @@ class FsData(Data):
         if not name in self._split_fragments:
             return None
         fragments = self._split_fragments[name]
-        ds = pq.ParquetDataset(fragments, filesystem=self._fs)
+        ds = pq.ParquetDataset(fragments, filesystem=self._fs)._dataset
         if adapters:
             return adapters(ds)
-        return ds._dataset
+        return ds
 
     @property
     def aux(self) -> AbstractFileSystem:

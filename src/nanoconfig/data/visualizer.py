@@ -8,23 +8,30 @@ import tempfile
 import functools
 import PIL.Image
 import io
+import numpy as np
+import pandas as pd
 
-from . import Data
+from . import Data, utils
 from .source import DataRepository
 from ..experiment import NestedResult
 
-def image_visualizer(data: pa.RecordBatch):
-    labels = data.schema.metadata.get(b"classes", None)
-    if labels:
-        labels = json.loads(labels.decode())
-    for row in data.to_pylist():
-        data = {}
-        image_data = row["image"]["bytes"]
-        image = PIL.Image.open(io.BytesIO(image_data))
-        data["image"] = image
-        if "label" in row:
-            data["label"] = row["label"] if labels is None else labels[row["label"]]
-        yield data
+def generic_visualizer(data: ds.Dataset):
+    classes = data.schema.metadata.get(b"classes", None)
+    if classes: classes = json.loads(classes.decode())
+    for batch in data.to_batches():
+        rows = {}
+        for column in batch.column_names:
+            if column == "image":
+                image_data = batch.column("image").field("bytes")
+                rows["image"] = [PIL.Image.open(io.BytesIO(img.as_py())) for img in image_data]
+            elif column == "label":
+                labels = utils.as_numpy(batch.column("label"))
+                rows["label"] = labels if classes is None else np.array([classes[label] for label in labels])
+            else:
+                rows[column] = utils.as_numpy(batch.column(column))
+        N = len(next(iter(rows.values()))) if rows else 0
+        for i in range(N):
+            yield {k: v[i] for k, v in rows.items()}
 
 def _slice_dataset(dataset: ds.Dataset, visualizer, start: int, stop: int):
     idx = 0
@@ -45,12 +52,13 @@ def _slice_dataset(dataset: ds.Dataset, visualizer, start: int, stop: int):
 class DataVisualizer:
     def __init__(self):
         self._visualizers = {}
-        self._visualizers["parquet/image"] = image_visualizer
-        self._visualizers["parquet/image+label"] = image_visualizer
 
-    def add_visualizers(self, visualizer: "DataVisualizer"):
-        for mime_type, func in visualizer._visualizers.items():
-            self._visualizers[mime_type] = func
+    def add_visualizers(self, mime_type: str, visualizer: ty.Callable):
+        self._visualizers[mime_type] = visualizer
+
+    def as_dataframe(self, split: ds.Dataset) -> pd.DataFrame:
+        visualizer = self._visualizers.get(split.schema.metadata.get(b"mime_type").decode(), generic_visualizer)
+        return pd.DataFrame(list(visualizer(split)))
 
     def show(self, data: Data):
         import marimo as mo
@@ -59,20 +67,17 @@ class DataVisualizer:
         def load_split(name):
             split = data.split(name)
             assert split is not None, f"Split '{name}' not found"
-            visualizer = self._visualizers[split.schema.metadata.get(b"mime_type").decode()]
-            rows = []
-            for batch in split.to_batches():
-                if len(rows) > 200:
-                    break
-                rows.extend(visualizer(batch))
-            df = pd.DataFrame(rows)
+            df = self.as_dataframe(split)
             return mo.vstack([
                 mo.ui.data_explorer(df),
                 mo.ui.dataframe(df, page_size=40)
             ])
         return mo.ui.tabs({
-            split.name: mo.lazy(functools.partial(load_split, split.name)) for split in splits
+            split.name: load_split(split.name) for split in splits
         })
+        # return mo.ui.tabs({
+        #     split.name: mo.lazy(functools.partial(load_split, split.name)) for split in splits
+        # })
         # return self._visualizer(data)
 
     @staticmethod

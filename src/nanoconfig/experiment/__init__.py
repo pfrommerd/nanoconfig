@@ -189,6 +189,27 @@ class Figure(Result):
     def _display_(self):
         return self.figure
 
+class Image(Result):
+    def __init__(self, image):
+        self.image = image
+
+    def log(self, experiment: Experiment, path: str,
+            series: str | None = None, step: int | None = None):
+        image = self.image
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().detach().numpy()
+        if isinstance(image, np.ndarray):
+            image = PILImage.fromarray(image)
+        experiment.log_image(path, image, series=series, step=step)
+
+    def _display_(self):
+        image = self.image
+        if isinstance(image, torch.Tensor):
+            image = image.cpu().detach().numpy()
+        if isinstance(image, np.ndarray):
+            image = PILImage.fromarray(image)
+        return image
+
 @config
 class ExperimentConfig:
     project: str | None = None
