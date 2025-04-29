@@ -66,7 +66,10 @@ class DataVisualizer:
                     break
                 rows.extend(visualizer(batch))
             df = pd.DataFrame(rows)
-            return mo.ui.dataframe(df, page_size=40)
+            return mo.vstack([
+                mo.ui.data_explorer(df),
+                mo.ui.dataframe(df, page_size=40)
+            ])
         return mo.ui.tabs({
             split.name: mo.lazy(functools.partial(load_split, split.name)) for split in splits
         })
