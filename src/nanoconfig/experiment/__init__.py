@@ -71,8 +71,15 @@ class Experiment(abc.ABC):
         for k, v in utils.flatten_items(result):
             if isinstance(v, Result):
                 v.log(self, path=k, step=step, series=series)
+                continue
             else:
-                raise TypeError(f"Unsupported type {type(v)} for logging")
+                try:
+                    v = float(v)
+                    self.log_metric(path=k, value=v, series=series, step=step)
+                    continue
+                except ValueError:
+                    pass
+            raise TypeError(f"Unsupported type {type(v)} for logging")
 
     @abc.abstractmethod
     def find_artifact(self, name: str, version: str | None = None, type: str | None = None) -> ArtifactInfo | None:

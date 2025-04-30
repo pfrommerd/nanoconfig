@@ -42,13 +42,14 @@ def test_torch_data():
     def read_image(pa_bytes):
         img = PIL.Image.open(io.BytesIO(pa_bytes.as_py()))
         return torchvision.transforms.functional.pil_to_tensor(img)
-    def convert_image(batch):
-        image_bytes = batch["image"].field("bytes")
-        labels = torch.tensor(batch["label"].to_numpy())
-        images = torch.stack([
-            read_image(b) for b in image_bytes
-        ])
-        return labels, images
+    def convert_image(dataset):
+        for batch in dataset.to_batches():
+            image_bytes = batch["image"].field("bytes")
+            labels = torch.tensor(batch["label"].to_numpy())
+            images = torch.stack([
+                read_image(b) for b in image_bytes
+            ])
+            yield images, labels
     adapter.register_type("parquet/image+label", convert_image)
     mnist_data = HfDataSource.from_repo("ylecun/mnist").prepare()
     train_data = mnist_data.split("train", adapter)
@@ -56,22 +57,14 @@ def test_torch_data():
     assert len(train_data) == 60000
 
 def test_memory_data_loader():
-    data = pa.Table.from_pylist([
-        {"data": 2},
-        {"data": 4},
-        {"data": 5},
-        {"data": 100}
-    ])
     # fs = MemoryFileSystem()
     # pq.write_to_dataset(data, root_path="data", filesystem=fs)
     # data = pq.ParquetDataset("/data/", filesystem=fs)
     dataset = InMemoryDataset(
-        data, lambda x: torch.tensor(
-            x["data"].to_numpy(zero_copy_only=False)
-        )
+        {"data": torch.tensor([2,4,5,100])}
     )
-    assert dataset[0] == 2
-    assert dataset[1] == 4
-    assert dataset[2] == 5
-    assert dataset[3] == 100
+    assert dataset[0] == {"data": 2}
+    assert dataset[1] == {"data": 4}
+    assert dataset[2] == {"data": 5}
+    assert dataset[3] == {"data": 100}
     assert len(dataset) == 4

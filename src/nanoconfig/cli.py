@@ -33,7 +33,7 @@ def data():
 def generate(name, cmd, args, transform, mime_type):
     """Generate data using a command."""
     source = GeneratorSource.from_command(cmd, *args)
-    transforms = _parse_transforms(transform)
+    transforms = _parse_constructors(transform)
     if mime_type:
         transforms.append(SetMimeType(mime_type))
     if transforms: source = DataPipeline(source, *transforms)
@@ -56,7 +56,7 @@ def generate(name, cmd, args, transform, mime_type):
 def pull(name, url, transform, mime_type):
     """Fetch data from a remote source."""
     source = DataSource.from_url(url)
-    transforms = _parse_transforms(transform)
+    transforms = _parse_constructors(transform)
     if mime_type:
         transforms.append(SetMimeType(mime_type))
     if transforms: source = DataPipeline(source, *transforms)
@@ -146,7 +146,7 @@ def garbage_collect():
 
 @click.option("--port", default=8000)
 @click.option("--host", default="127.0.0.1")
-@click.option("--visualizer", default="nanoconfig.data.visualizer:DataVisualizer")
+@click.option("--visualizer", default="nanoconfig.data.visualizer.DataVisualizer()")
 @click.argument("data")
 @data.command()
 def visualize(data, visualizer, host, port):
@@ -157,24 +157,6 @@ def visualize(data, visualizer, host, port):
         rich.print(f"Data not found: {data}")
         return
     DataVisualizer.host_marimo_notebook(host, port, visualizer, data)
-
-@click.argument('subcommand', default="")
-@click.pass_context
-@data.command()
-def help(ctx, subcommand):
-    """Get help for a subcommand"""
-    if not subcommand:
-        click.echo("Available commands:")
-        for command in data.commands:
-            click.echo(f"  {command}")
-        return
-    else:
-        cmd = data.get_command(ctx, subcommand)
-        ctx.info_name = subcommand
-        if cmd is None:
-            click.echo(f"Unrecognized command: {subcommand}")
-        else:
-            click.echo(cmd.get_help(ctx))
 
 class CustomLogRender(rich._log_render.LogRender): # type: ignore
     def __call__(self, *args, **kwargs):
@@ -214,24 +196,26 @@ def setup_logging(show_path=False):
         handlers=[handler]
     )
 
-def _parse_transforms(transforms: list[str]):
-    def _parse(t: str):
-        idx = t.find("(")
-        if idx >= 0:
-            base, args = t[:idx], t[idx+1:-1]
-            args = json.loads(f"[{args}]")
-        else:
-            base, args = t, None
-        idx = base.rfind(".")
-        if idx >= 0:
-            module = base[:idx]
-            name = base[idx+1:]
-        else:
-            module = "nanoconfig.data.transform"
-            name = base
-        transform = getattr(importlib.import_module(module), name)
-        if args is None:
-            return transform
-        else:
-            return transform(*args)
-    return [_parse(t.strip()) for t in transforms]
+def _parse_ctor(t: str):
+    t = t.strip()
+    idx = t.find("(")
+    if idx >= 0:
+        base, args = t[:idx], t[idx+1:-1]
+        args = json.loads(f"[{args}]")
+    else:
+        base, args = t, None
+    idx = base.rfind(".")
+    if idx >= 0:
+        module = base[:idx]
+        name = base[idx+1:]
+    else:
+        module = "nanoconfig.data.transform"
+        name = base
+    transform = getattr(importlib.import_module(module), name)
+    if args is None:
+        return transform
+    else:
+        return transform(*args)
+
+def _parse_constructors(ctors: list[str]):
+    return [_parse_ctor(t) for t in ctors]

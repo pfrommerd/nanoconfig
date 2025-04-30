@@ -70,12 +70,17 @@ class StreamingDataset(IterableDataset[T], SizedDataset[T], ty.Generic[T]):
 class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
     def __init__(self, data: T, *, _length: int | None = None):
         self._data = data
-        self._data_sample = pytree.tree_map(lambda x: x[0], self._data)
-        self._length = pytree.tree_leaves(self._data)[0].shape[0]
+        self._data_sample = pytree.tree_map(lambda x: x[0] if isinstance(x, torch.Tensor) else x, self._data)
+        self._length = [
+            x for x in pytree.tree_leaves(self._data)
+            if isinstance(x, torch.Tensor)
+        ][0].shape[0]
 
     def loader(self, batch_size: int, *, shuffle: bool = True) -> DataLoader[T]:
         return DataLoader(self, batch_size=batch_size, shuffle=shuffle, collate_fn=
-            lambda x: pytree.tree_map(lambda *xs: torch.stack(xs), x))
+            lambda x: pytree.tree_map(lambda *xs: torch.stack(xs)
+                            if isinstance(xs[0], torch.Tensor) else xs[0], *x)
+        )
 
     def head(self, n: int) -> T:
         return pytree.tree_map(lambda x: x[:n], self._data)
@@ -85,9 +90,9 @@ class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
         return self._data_sample
 
     def __getitem__(self, index: int) -> T:
-        sample = pytree.tree_map(lambda x: x[index], self._data)
-        print(sample)
-        return sample
+        return pytree.tree_map(
+            lambda x: x[index] if isinstance(x, torch.Tensor) else x,
+            self._data)
 
     def __len__(self) -> int:
         return self._length

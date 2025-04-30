@@ -6,13 +6,13 @@ from . import Data
 from .source import DataSource, DataRepository
 
 class DataTransform(abc.ABC):
+    @abc.abstractmethod
+    def transform(self, data: Data, repo: DataRepository | None = None) -> Data:
+        pass
+
     @property
     @abc.abstractmethod
     def sha256(self) -> str:
-        pass
-
-    @abc.abstractmethod
-    def transform(self, data: Data, repo: DataRepository | None = None) -> Data:
         pass
 
 # A data pipeline is a source and a sequence of transformations
@@ -106,7 +106,7 @@ class SetMimeType(DataTransform):
                         split_writer.write_batch(batch)
             return writer.close()
 
-drop_columns = lambda *x: DropColumns
+drop_columns = lambda *x: DropColumns(*x)
 drop_column = drop_columns
 drop_label = DropColumns("label")
 

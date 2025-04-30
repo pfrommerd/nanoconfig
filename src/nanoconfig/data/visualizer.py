@@ -29,9 +29,9 @@ def generic_visualizer(data: ds.Dataset):
                 rows["label"] = labels if classes is None else np.array([classes[label] for label in labels])
             else:
                 rows[column] = utils.as_numpy(batch.column(column))
-        N = len(next(iter(rows.values()))) if rows else 0
+        N = max(len(v) for v in rows.values()) if rows else 0
         for i in range(N):
-            yield {k: v[i] for k, v in rows.items()}
+            yield {k: v[i] for k, v in rows.items() if len(v) > i}
 
 def _slice_dataset(dataset: ds.Dataset, visualizer, start: int, stop: int):
     idx = 0
@@ -89,8 +89,14 @@ class DataVisualizer:
         if not isinstance(visualizer_type, str):
             module = visualizer_type.__module__
             name = visualizer_type.__qualname__
+            args = "()"
+        elif "." in visualizer_type:
+            idx = visualizer_type.rfind(".")
+            module, name = visualizer_type[:idx], visualizer_type[idx+1:].split("(")[0]
+            idx = visualizer_type.find("(")
+            args = "" if idx < 0 else visualizer_type[idx:]
         else:
-            module, name = visualizer_type.split(":")
+            raise ValueError(f"Invalid visualizer: {visualizer_type}")
         try:
             import marimo
         except ImportError:
@@ -103,7 +109,10 @@ class DataVisualizer:
         with tempfile.TemporaryDirectory() as tempdir:
             with open(f"{tempdir}/visualizer.py", "w") as f:
                 f.write(NOTEBOOK_TEMPLATE.format(
-                    data_sha256=data.sha256, visualizer_module=module, visualizer_name=name
+                    data_sha256=data.sha256,
+                    visualizer_module=module,
+                    visualizer_name=name,
+                    visualizer_args=args
                 ))
             server = (
                 marimo.create_asgi_app(include_code=True)
@@ -123,7 +132,7 @@ def _():
     from {visualizer_module} import {visualizer_name}
     repo = DataRepository.default()
     data = repo.lookup("{data_sha256}")
-    visualizer = {visualizer_name}()
+    visualizer = {visualizer_name}{visualizer_args}
     return repo, data, visualizer
 
 @app.cell
