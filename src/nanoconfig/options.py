@@ -69,7 +69,7 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
             ) -> ty.Iterator[Option]:
     if isinstance(type, ty.Type) and issubclass(type, Config):
         # If we have variants, add a "type" option
-        if _has_variant_tag(type, relative_to_base):
+        if _has_variant_tag(type, relative_to_base): # type: ignore
             variants = type.__variants__
             variant_lookup = {type: alias for alias, type in variants.items()}
             # If the type is an abstract class,
@@ -100,7 +100,7 @@ def _as_options(type : ty.Type[T], default : T | Missing = MISSING, *,
                                prefix=prefix if flat else _join(prefix, f.name))
 
         # If we have variants, output each of the variant options
-        if _has_variant_tag(type, relative_to_base):
+        if _has_variant_tag(type, relative_to_base): # type: ignore
             for alias, variant_type in type.__variants__.items():
                 # If the type is the same as the base type,
                 # we do not need to output the base type
@@ -132,21 +132,17 @@ def _from_parsed_options(options: dict[str, str],
                   prefix="") -> T | Missing:
     if isinstance(type, ty.Type) and issubclass(type, Config):
         if type.__variants__:
+            variant_lookup = {t: alias for alias, t in type.__variants__.items()}
             default_type = _type(default) if default is not MISSING else (
                 type if not isinstance(type, abc.ABCMeta) else MISSING
             )
-            variant = options.pop(_join(prefix, "type"), MISSING)
-            if variant is not MISSING and variant not in type.__variants__:
+            default_variant = variant_lookup.get(default_type, MISSING)
+            variant = options.pop(_join(prefix, "type"), default_variant)
+            if variant not in type.__variants__:
                 raise OptionParseError(f"Invalid variant {variant} for {type}")
-            config_type = (type.__variants__[variant]
-                           if variant is not MISSING else default_type)
-            config_fields = default_type if config_type is MISSING else config_type
-            if config_type is MISSING:
-                raise OptionParseError(f"Missing variant specifier {prefix} for {type}")
-            # If we specified a variant different than the default,
-            # remove the default value.
-            if config_type != default_type:
-                default = MISSING
+            config_type = type.__variants__[variant]
+            # If we specified a variant different than the default, remove the default value.
+            if config_type != default_type: default = MISSING
         else:
             if default is not MISSING and type != _type(default):
                 raise OptionParseError(f"Default type and specified type must match exactly.")
@@ -170,6 +166,7 @@ def _from_parsed_options(options: dict[str, str],
                         prefix if flat else _join(prefix, f.name), f
                     )
                 else:
+                    assert variant is not MISSING, "variant must be set"
                     config_fields[f.name] = (
                         _join(prefix, variant) if flat else
                         _join(prefix, f"{variant}.{f.name}"), f
