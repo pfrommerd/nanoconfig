@@ -12,8 +12,8 @@ def as_numpy(array: pa.FixedSizeListArray) -> np.ndarray:
         type = type.value_type
     return array.to_numpy(zero_copy_only=False).reshape(-1, *shape)
 
-def as_array(array: np.ndarray) -> pa.Array:
+def as_arrow_array(array: np.ndarray) -> pa.Array:
     pa_array = pa.array(array.flatten())
-    for s in array.shape[:-1:-1]:
+    for s in array.shape[1:][::-1]:
         pa_array = pa.FixedSizeListArray.from_arrays(pa_array, s)
     return pa_array
