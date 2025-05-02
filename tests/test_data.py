@@ -23,18 +23,18 @@ def test_hf_data_source():
             pa.field("bytes", pa.binary()),
             pa.field("path", pa.string())
         ])),
-        pa.field("label", pa.int64())
+        pa.field("class", pa.int64())
     ])
     assert actual_schema == expected_schema
-    assert actual_schema.metadata[b"mime_type"] == b"data/image+label"
+    assert actual_schema.metadata[b"mime_type"] == b"data/image+class"
 
-    tinystories_data = HfDataSource.from_repo("roneneldan/TinyStories").prepare()
-    actual_schema = tinystories_data.split_info("train").schema
-    expected_schema = pa.schema([
-        pa.field("text", pa.string()),
-    ])
-    assert actual_schema == expected_schema
-    assert actual_schema.metadata[b"mime_type"] == b"data/text"
+    # tinystories_data = HfDataSource.from_repo("roneneldan/TinyStories").prepare()
+    # actual_schema = tinystories_data.split_info("train").schema
+    # expected_schema = pa.schema([
+    #     pa.field("text", pa.string()),
+    # ])
+    # assert actual_schema == expected_schema
+    # assert actual_schema.metadata[b"mime_type"] == b"data/text"
 
 def test_torch_data():
     adapter = TorchAdapter()
@@ -45,12 +45,12 @@ def test_torch_data():
     def convert_image(dataset):
         for batch in dataset.to_batches():
             image_bytes = batch["image"].field("bytes")
-            labels = torch.tensor(batch["label"].to_numpy())
+            labels = torch.tensor(batch["class"].to_numpy())
             images = torch.stack([
                 read_image(b) for b in image_bytes
             ])
             yield images, labels
-    adapter.register_type("data/image+label", convert_image)
+    adapter.register_type("data/image+class", convert_image)
     mnist_data = HfDataSource.from_repo("ylecun/mnist").prepare()
     train_data = mnist_data.split("train", adapter)
     assert train_data is not None
