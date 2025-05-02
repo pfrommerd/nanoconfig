@@ -84,6 +84,9 @@ class ClearMLExperiment(Experiment, ConsoleMixin):
         else:
             return super().run()
 
+    def step_offset(self, offset: int = 0) -> int:
+        raise NotImplementedError
+
     @contextlib.contextmanager
     def create_artifact(self, name: str, type: str) -> ty.Iterator[ArtifactBuilder]: # type: ignore
         yield None # type: ignore

@@ -26,7 +26,7 @@ def test_hf_data_source():
         pa.field("label", pa.int64())
     ])
     assert actual_schema == expected_schema
-    assert actual_schema.metadata[b"mime_type"] == b"parquet/image+label"
+    assert actual_schema.metadata[b"mime_type"] == b"data/image+label"
 
     tinystories_data = HfDataSource.from_repo("roneneldan/TinyStories").prepare()
     actual_schema = tinystories_data.split_info("train").schema
@@ -34,7 +34,7 @@ def test_hf_data_source():
         pa.field("text", pa.string()),
     ])
     assert actual_schema == expected_schema
-    assert actual_schema.metadata[b"mime_type"] == b"parquet/text"
+    assert actual_schema.metadata[b"mime_type"] == b"data/text"
 
 def test_torch_data():
     adapter = TorchAdapter()
@@ -50,7 +50,7 @@ def test_torch_data():
                 read_image(b) for b in image_bytes
             ])
             yield images, labels
-    adapter.register_type("parquet/image+label", convert_image)
+    adapter.register_type("data/image+label", convert_image)
     mnist_data = HfDataSource.from_repo("ylecun/mnist").prepare()
     train_data = mnist_data.split("train", adapter)
     assert train_data is not None

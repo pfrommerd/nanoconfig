@@ -63,7 +63,7 @@ class DropColumns(DataTransform):
         final = repo.lookup(dest_sha)
         if final is not None:
             return final
-        with repo.initialize(dest_sha) as writer:
+        with repo.init(dest_sha) as writer:
             for name in data.split_infos().keys():
                 split = data.split(name)
                 assert split is not None
@@ -93,7 +93,7 @@ class SetMimeType(DataTransform):
         final = repo.lookup(dest_sha)
         if final is not None:
             return final
-        with repo.initialize(dest_sha) as writer:
+        with repo.init(dest_sha) as writer:
             for name in data.split_infos().keys():
                 split = data.split(name)
                 assert split is not None

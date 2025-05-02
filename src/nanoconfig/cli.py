@@ -40,12 +40,13 @@ def generate(name, cmd, args, transform, mime_type):
     repo = DataRepository.default()
     if repo.lookup(source) is not None:
         repo.register(name, source.sha256)
-        rich.print(f"Data already exists: [blue]{source.sha256}[/blue]")
+        rich.print("="*80)
+        rich.print(f"Data already exists:")
     else:
         data = repo.get(source)
         repo.register(name, data)
-        rich.print(f"Generated data: [blue]{data.sha256}[/blue]")
-    rich.print("="*80)
+        rich.print("="*80)
+        rich.print(f"Generated data:")
     info.callback(name) # type: ignore
 
 @click.option("--transform", "-t", type=str, multiple=True)
@@ -63,12 +64,13 @@ def pull(name, url, transform, mime_type):
     repo = DataRepository.default()
     if repo.lookup(source) is not None:
         repo.register(name, source.sha256)
-        rich.print(f"Using cached data: [blue]{source.sha256}[/blue]")
+        rich.print("="*80)
+        rich.print(f"Using cached data:")
     else:
         data = repo.get(source)
         repo.register(name, data)
-        rich.print(f"Pulled data: [blue]{data.sha256}[/blue]")
-    rich.print("="*80)
+        rich.print("="*80)
+        rich.print(f"Pulled data:")
     info.callback(name) # type: ignore
 
 @data.command("list")
@@ -104,8 +106,19 @@ def info(name):
     for split_info in data.split_infos().values():
         rich.print(f"  [yellow]{split_info.name}[/yellow]: {split_info.size} ({split_info.mime_type})")
         schema = split_info.schema
-        for field, field_type in zip(schema.names, schema.types):
-            rich.print(f"    - [blue]{field}[/blue]: {field_type}")
+        for field_name in schema.names:
+            field = schema.field(field_name)
+            # field_type = field.type
+            field_mime = field.metadata.get(b"mime_type", b"unknown").decode()
+            metadata = {k.decode(): v.decode()[:64] + "..." if len(v) > 64 else v.decode() for k, v in field.metadata.items()} \
+                if field.metadata else {}
+            field_metadata = (
+                ", ".join(f"{k}={v}" for k, v in metadata.items() if k != "mime_type")
+            )
+            rich.print(f"    - [blue]{field_name}[/blue]: {field.type} ({field_mime})")
+            for k, v in metadata.items():
+                if k != "mime_type":
+                    rich.print(f"        {k}: {v}")
 
 @click.argument("keys", nargs=-1)
 @data.command()
@@ -169,7 +182,6 @@ FORMAT = "%(name)s - %(message)s"
 
 def setup_logging(show_path=False):
     # add_log_level("TRACE", logging.DEBUG - 5)
-    logging.getLogger("nanoconfig").setLevel(logging.INFO)
     if rich.get_console().is_jupyter:
         return rich.reconfigure(
             force_jupyter=False,
@@ -190,7 +202,7 @@ def setup_logging(show_path=False):
     )
     handler._log_render = renderer
     logging.basicConfig(
-        level=logging.WARNING,
+        level=logging.INFO,
         format=FORMAT,
         datefmt="[%X]",
         handlers=[handler]

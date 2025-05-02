@@ -1,3 +1,4 @@
+from attr import s
 from huggingface_hub.hf_api import R
 from pandas.core.indexes.datetimes import dt
 from . import Data, SplitInfo, DataAdapter
@@ -55,14 +56,18 @@ class FsData(Data):
             schema=ds.schema
         )
 
-    def split(self, name: str, adapters: DataAdapter[T] | None = None) -> ds.Dataset | T | None:
+    def split(self, name: str, adapter: DataAdapter[T] | None = None) -> ds.Dataset | T | None:
         if not name in self._split_fragments:
             return None
         fragments = self._split_fragments[name]
         ds = pq.ParquetDataset(fragments, filesystem=self._fs)._dataset
-        if adapters:
-            return adapters(ds)
+        if adapter:
+            return adapter(ds)
         return ds
+
+    def splits(self, adapter: DataAdapter[T] | None = None) -> ty.Iterator[tuple[str, ds.Dataset | T]]:
+        for name in self._split_fragments:
+            yield name, self.split(name, adapter)
 
     @property
     def aux(self) -> AbstractFileSystem:
@@ -109,8 +114,17 @@ class FsSplitWriter(SplitWriter):
     def write_batch(self, batch: pa.RecordBatch):
         if not self._schema:
             self._schema = batch.schema
+            if not self._schema or not b'mime_type' in self._schema.metadata:
+                raise ValueError("Schema must have a mime_type metadata")
+            for field in self._schema.names:
+                field = self._schema.field(field)
+                if not field.metadata or not b'mime_type' in field.metadata:
+                    raise ValueError(f"Field {field} must have a mime_type metadata")
         else:
-            assert self._schema == batch.schema
+            if not self._schema == batch.schema:
+                raise ValueError(f"Schema mismatch: {self._schema} != {batch.schema}")
+            # Just in case the metadata is different, cast the batch to a uniform schema
+            batch = batch.cast(self._schema)
         self._check_writer()
         assert self._current_writer is not None
         self._current_writer.write_batch(batch)
@@ -182,6 +196,7 @@ class FsDataRepository(DataRepository):
         with self.fs.open("registry.json", "w") as f:
             json.dump(self._aliases, f)
 
+    @ty.override
     def gc(self) -> set[str]:
         removed = set()
         shas = set(self._aliases.values())
@@ -191,6 +206,7 @@ class FsDataRepository(DataRepository):
                 self.fs.rm(sha, recursive=True)
         return removed
 
+    @ty.override
     def lookup(self, alias_or_sha: str | Data | DataSource) -> Data | None:
         if not isinstance(alias_or_sha, str):
             sha = alias_or_sha.sha256
@@ -200,8 +216,9 @@ class FsDataRepository(DataRepository):
             return None
         return FsData(DirFileSystem(PurePath(sha), self.fs), sha)
 
+    @ty.override
     @contextlib.contextmanager
-    def initialize(self, data_sha: str) -> ty.Iterator[FsDataWriter]:
+    def init(self, data_sha: str) -> ty.Iterator[FsDataWriter]:
         if self.fs.exists(data_sha):
             raise FileExistsError(f"Data '{data_sha}' already exists")
         self.fs.mkdir(data_sha)

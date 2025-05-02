@@ -84,11 +84,9 @@ class DataWriter(abc.ABC):
     # Will copy all data over. Can be overridden
     # by subclasses to implement more efficient copying.
     def write(self, data: Data):
-        for split in data.split_infos().values():
-            with self.split(split.name) as split_writer:
-                ds = data.split(split.name)
-                assert ds is not None
-                for batch in ds.to_batches():
+        for name, split in data.splits():
+            with self.split(name) as split_writer:
+                for batch in split.to_batches():
                     split_writer.write_batch(batch)
 
     @abc.abstractmethod
@@ -118,7 +116,7 @@ class DataRepository(abc.ABC):
 
     @abc.abstractmethod
     @contextlib.contextmanager
-    def initialize(self, data_sha: str) -> ty.Iterator[DataWriter]:
+    def init(self, data_sha: str) -> ty.Iterator[DataWriter]:
         pass
 
     def get(self, source: str | Data | DataSource) -> Data:
@@ -136,7 +134,7 @@ class DataRepository(abc.ABC):
         else:
             data = source
         if self.lookup(data.sha256) is None:
-            with self.initialize(data.sha256) as writer:
+            with self.init(data.sha256) as writer:
                 writer.write(data)
             assert data is not None
         data = self.lookup(data.sha256)

@@ -82,6 +82,15 @@ class Experiment(abc.ABC):
             raise TypeError(f"Unsupported type {type(v)} for logging")
 
     @abc.abstractmethod
+    def step_offset(self, offset: int = 0) -> int:
+        ...
+
+    @property
+    @abc.abstractmethod
+    def step(self) -> int:
+        ...
+
+    @abc.abstractmethod
     def find_artifact(self, name: str, version: str | None = None, type: str | None = None) -> ArtifactInfo | None:
         ...
 
@@ -132,30 +141,41 @@ class LocalExperiment(ConsoleMixin, Experiment):
                     config: Config | None = None):
         ConsoleMixin.__init__(self, logger, console_intervals)
         Experiment.__init__(self, main=main, config=config)
+        self._step_offset = 0
+        self._step = 0
+
+    @property
+    def step(self) -> int:
+        return self._step - self._step_offset
+
+    def step_offset(self, offset: int = 0) -> int:
+        self._step_offset += offset
+        return self._step_offset
 
     @contextlib.contextmanager
     def create_artifact(self, name: str, type: str) -> ty.Iterator[ArtifactBuilder]:
         yield None # type: ignore
 
     def find_artifact(self, name: str, version: str | None = None,
-                      type: str | None = None) -> ArtifactInfo | None:
-        pass
+                      type: str | None = None) -> ArtifactInfo | None: ...
+    def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None: ...
 
-    def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None:
-        pass
+    def log_metric(self, path: str, value: float, series: str | None = None, step: int | None = None):
+        self._step = max(self._step, step or self._step)
+        super().log_metric(path, value, series, step)
 
     def log_figure(self, path: str, figure: ty.Any | dict,
                    series: str | None = None, step: int | None = None,
                    static: bool = False):
-        pass
+        self._step = max(self._step, step or self._step)
 
     def log_image(self, path: str, image: PILImage.Image | np.ndarray | torch.Tensor,
                     series: str | None = None, step: int | None = None):
-        pass
+        self._step = max(self._step, step or self._step)
 
     def log_table(self, path: str, table: pd.DataFrame,
                   series: str | None = None, step: int | None = None):
-        pass
+        self._step = max(self._step, step or self._step)
 
 class Result(abc.ABC):
     @abc.abstractmethod
@@ -205,6 +225,11 @@ class Image(Result):
         image = self.image
         if isinstance(image, torch.Tensor):
             image = image.cpu().detach().numpy()
+        if image.ndim == 2:
+            image = np.expand_dims(image, axis=-1)
+        if image.dtype == np.float32:
+            image = np.nan_to_num((image*255).clip(0, 255), nan=0., posinf=255., neginf=0.)
+            image = image.astype(np.uint8).squeeze(-1)
         if isinstance(image, np.ndarray):
             image = PILImage.fromarray(image)
         experiment.log_image(path, image, series=series, step=step)

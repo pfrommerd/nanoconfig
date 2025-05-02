@@ -1,5 +1,7 @@
 import abc
 import typing as ty
+from pandas import compat
+from plotly.graph_objects import Stream
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.dataset as ds
@@ -24,6 +26,10 @@ class SizedDataset(Dataset[T], ty.Generic[T], ty.Sized):
     def head(self, n: int) -> T:
         ...
 
+    @abc.abstractmethod
+    def limit(self, n: int) -> ty.Self:
+        ...
+
     @property
     @abc.abstractmethod
     def data_sample(self) -> T:
@@ -32,7 +38,7 @@ class SizedDataset(Dataset[T], ty.Generic[T], ty.Sized):
 class StreamingDataset(IterableDataset[T], SizedDataset[T], ty.Generic[T]):
     def __init__(self, data: ds.Dataset, converter: Converter[T], *,
                     batch_size: int | None = None, shuffle: bool = False,
-                    _data_sample: T | None = None):
+                    _data_sample: T | None = None, _length: int | None = None):
         if _data_sample is None:
             first_batch = next(converter(data))
             _data_sample = pytree.tree_map(lambda x: x[0], first_batch)
@@ -40,13 +46,18 @@ class StreamingDataset(IterableDataset[T], SizedDataset[T], ty.Generic[T]):
         # put back on the iterator
         self._data = data
         self._converter = converter
-        self._length = data.count_rows()
+        self._length = _length or data.count_rows()
         self._data_sample = _data_sample
         self._batch_size = batch_size
         self._shuffle = shuffle
 
     def head(self, n: int) -> T:
         raise NotImplementedError
+
+    def limit(self, n: int) -> "StreamingDataset[T]":
+        return StreamingDataset(self._data, self._converter,
+            _data_sample=self._data_sample, _length=min(n, self._length)
+        )
 
     @property
     def data_sample(self) -> T:
@@ -55,7 +66,7 @@ class StreamingDataset(IterableDataset[T], SizedDataset[T], ty.Generic[T]):
     def loader(self, batch_size: int, *, shuffle: bool = False) -> DataLoader[T]:
         return DataLoader(StreamingDataset(self._data, self._converter,
             batch_size=batch_size, shuffle=shuffle,
-            _data_sample=self._data_sample
+            _data_sample=self._data_sample, _length=self._length
         ))
 
     def __iter__(self):
@@ -85,6 +96,12 @@ class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
     def head(self, n: int) -> T:
         return pytree.tree_map(lambda x: x[:n], self._data)
 
+    def limit(self, n: int) -> "InMemoryDataset[T]":
+        return InMemoryDataset(
+            pytree.tree_map(lambda x: x[:n], self._data),
+            _length=min(n, self._length)
+        )
+
     @property
     def data_sample(self) -> T:
         return self._data_sample
@@ -102,9 +119,10 @@ class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
         return InMemoryDataset(None, None, _data=data, _length=self._length) # type: ignore
 
 class TorchAdapter(DataAdapter[SizedDataset[T]], ty.Generic[T]):
-    def __init__(self, force_stream: bool = False):
+    def __init__(self, force_stream: bool = False, override_mime_type: str | None = None):
         self._adapters = {}
         self._force_stream = force_stream
+        self._force_mime_type = override_mime_type
 
     def register_type(self, mime_type: str,
             convert: Converter[T]):
@@ -112,9 +130,20 @@ class TorchAdapter(DataAdapter[SizedDataset[T]], ty.Generic[T]):
 
     def convert(self, data: ds.Dataset) -> ty.Iterator[T]:
         mime_type = data.schema.metadata.get(b"mime_type", "unknown").decode()
+        if self._force_mime_type is not None:
+            mime_type = self._force_mime_type
+            metadata = data.schema.metadata if data.schema.metadata else {}
+            metadata[b"mime_type"] = mime_type.encode()
+            data = data.replace_schema(data.schema.with_metadata(metadata))
         if mime_type not in self._adapters:
-            raise ValueError(f"Unsupported mime type: {mime_type}")
-        converter = self._adapters[mime_type]
+            # get the longest prefix match
+            compatible = list((-len(k), v) for k, v in self._adapters.items() if mime_type.startswith(k))
+            compatible.sort(key=lambda x: x[0])
+            if not compatible:
+                raise ValueError(f"Unsupported mime type: {mime_type}")
+            converter = compatible[0][1]
+        else:
+            converter = self._adapters[mime_type]
         return converter(data)
 
     def __call__(self, data: ds.Dataset) -> SizedDataset[T]:

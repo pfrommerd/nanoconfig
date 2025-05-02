@@ -5,6 +5,7 @@ import os
 import io
 import numpy as np
 import torch
+import pandas as pd
 
 from wandb.sdk import wandb_run
 from wandb.sdk.lib.printer import WARN
@@ -97,6 +98,15 @@ class WandbExperiment(Experiment, ConsoleMixin):
             name=run_name,
             config=config.to_dict() if config is not None else None
         )
+        self._step_offset = 0
+
+    @property
+    def step(self) -> int:
+        return self.wandb_run.step - self._step_offset
+
+    def step_offset(self, offset: int = 0) -> int:
+        self._step_offset += offset
+        return self._step_offset
 
     def find_artifact(self, name: str, version: str | None = None,
                         type: str | None = None) -> ArtifactInfo | None:
@@ -138,8 +148,8 @@ class WandbExperiment(Experiment, ConsoleMixin):
         if series is not None:
             path = f"{path}/{series}"
         step = self.wandb_run.step if step is None else step
-        assert step >= self.wandb_run.step
-        self.wandb_run.log({path: value}, step=step)
+        assert step + self._step_offset >= self.wandb_run.step
+        self.wandb_run.log({path: value}, step=step + self._step_offset)
 
     def log_figure(self, path: str, figure : ty.Any, series: str | None = None, step: int | None = None,
                             static: bool = False):
@@ -152,27 +162,31 @@ class WandbExperiment(Experiment, ConsoleMixin):
             if series is not None:
                 path = f"{path}/{series}"
             step = self.wandb_run.step if step is None else step
-            assert step >= self.wandb_run.step
-            return self.wandb_run.log({path : wandb.Plotly(figure)}, step=step)
+            assert step + self._step_offset >= self.wandb_run.step
+            return self.wandb_run.log({path : wandb.Plotly(figure)}, step=step + self._step_offset)
 
     def log_image(self, path: str, image: PILImage.Image | np.ndarray | torch.Tensor,
                     series: str | None = None, step: int | None = None):
         if series is not None:
             path = f"{path}/{series}"
         step = self.wandb_run.step if step is None else step
-        assert step >= self.wandb_run.step
+        assert step + self._step_offset >= self.wandb_run.step
         self.wandb_run.log({
             path: wandb.Image(image)
-        }, step=step)
+        }, step=step + self._step_offset)
 
-    def log_table(self, path: str, table: ty.Any, series: str | None = None, step: int | None = None):
+    def log_table(self, path: str, table: pd.DataFrame, series: str | None = None, step: int | None = None):
         if series is not None:
             path = f"{path}/{series}"
         step = self.wandb_run.step if step is None else step
-        assert step >= self.wandb_run.step
+        assert step + self._step_offset >= self.wandb_run.step
+        # Convert all PIL images to wandb.Image
+        for column, type in zip(table.columns, table.dtypes):
+            if type == object:
+                table[column] = table[column].apply(lambda x: wandb.Image(x) if isinstance(x, PILImage.Image) else x)
         self.wandb_run.log({
-            path: wandb.Table(data=table)
-        }, step=step)
+            path: wandb.Table(dataframe=table)
+        }, step=step + self._step_offset)
 
     def finish(self):
         self.wandb_run.finish()

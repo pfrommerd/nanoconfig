@@ -49,7 +49,7 @@ class GeneratorSource(DataSource):
             res.check_returncode()
             fs = DirFileSystem(str(tempdir), LocalFileSystem())
             data = FsData(fs, self.sha256)
-            with repo.initialize(self.sha256) as w:
+            with repo.init(self.sha256) as w:
                 w.write(data)
                 data = w.close()
                 return data
