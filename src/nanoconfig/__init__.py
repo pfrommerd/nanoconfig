@@ -14,7 +14,7 @@ class Missing:
     def __repr__(self):
         return "???"
 
-MISSING = Missing()
+MISSING : ty.Any = Missing() # type: ignore
 
 class ConfigType(type):
     def __init__(self, cls, bases, namespace):

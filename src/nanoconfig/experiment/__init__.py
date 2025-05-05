@@ -22,20 +22,22 @@ class Dummy: ...
 @dataclass(frozen=True)
 class ArtifactInfo:
     name: str
+    path: str
     type: str
     version: str
     digest: str
 
 class Artifact(abc.ABC):
-    def __init__(self, name: str, type: str, version: str,  digest: str):
+    def __init__(self, name: str, path: str, type: str, version: str,  digest: str):
         self.name = name
+        self.path = path
         self.type = type
         self.version = version
         self.digest = digest
 
     @property
     def info(self) -> ArtifactInfo:
-        return ArtifactInfo(self.name, self.type, self.version, self.digest)
+        return ArtifactInfo(self.name, self.path, self.type, self.version, self.digest)
 #
     @abc.abstractmethod
     def open_file(self, path: str) -> ty.ContextManager[io.BufferedReader]:

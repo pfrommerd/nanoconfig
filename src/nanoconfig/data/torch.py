@@ -98,7 +98,7 @@ class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
 
     def limit(self, n: int) -> "InMemoryDataset[T]":
         return InMemoryDataset(
-            pytree.tree_map(lambda x: x[:n], self._data),
+            pytree.tree_map(lambda x: x[:n] if isinstance(x, torch.Tensor) else x, self._data),
             _length=min(n, self._length)
         )
 
@@ -119,10 +119,13 @@ class InMemoryDataset(SizedDataset[T], ty.Generic[T]):
         return InMemoryDataset(None, None, _data=data, _length=self._length) # type: ignore
 
 class TorchAdapter(DataAdapter[SizedDataset[T]], ty.Generic[T]):
-    def __init__(self, force_stream: bool = False, override_mime_type: str | None = None):
+    def __init__(self, force_stream: bool = False, override_mime_type: str | None = None,
+                        shuffle_load_order: bool = True, load_order_seed: int = 42):
         self._adapters = {}
         self._force_stream = force_stream
         self._force_mime_type = override_mime_type
+        self._shuffle_load_order = shuffle_load_order
+        self._load_order_seed = load_order_seed
 
     def register_type(self, mime_type: str,
             convert: Converter[T]):
@@ -163,10 +166,18 @@ class TorchAdapter(DataAdapter[SizedDataset[T]], ty.Generic[T]):
                 lambda *xs: (torch.concatenate(xs)
                     if isinstance(xs[0], torch.Tensor) else xs[0]), *batches
             )
+            L = [x for x in pytree.tree_leaves(batches) if isinstance(x, torch.Tensor)][0].shape[0]
+            # Shuffle the dataset when loaded in, so that e.g. limit()
+            # will perduce a random dataset that is not disk-order dependent
+            if self._shuffle_load_order:
+                gen = torch.Generator()
+                gen.manual_seed(self._load_order_seed)
+                perm = torch.randperm(L, generator=gen)
+                batches = pytree.tree_map(lambda x: x[perm] if isinstance(x, torch.Tensor) else x, batches)
             return InMemoryDataset(batches)
         else:
+            raise NotImplementedError
             return StreamingDataset(data, self.convert)
-
 
 def as_torch(array: pa.FixedSizeListArray, device: torch.device | str = "cpu") -> torch.Tensor:
     if isinstance(device, str):

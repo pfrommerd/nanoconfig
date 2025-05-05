@@ -27,8 +27,13 @@ CACHE_DIR = Path.home() / ".cache" / "nanoconfig" / "wandb"
 
 class WandbArtifact(Artifact):
     def __init__(self, wandb_artifact: wandb.Artifact):
+        name = wandb_artifact.name
+        if ":" in name:
+            name, _ = name.split(":")
+        path = f"{wandb_artifact.entity}/{wandb_artifact.project}/{name}:{wandb_artifact.version}"
         super().__init__(
             name=wandb_artifact.name,
+            path=path,
             type=wandb_artifact.type,
             version=wandb_artifact.version,
             digest=wandb_artifact.digest
@@ -117,12 +122,11 @@ class WandbExperiment(Experiment, ConsoleMixin):
         name = artifact.name
         if ":" in name:
             name, _ = name.split(":")
-        return ArtifactInfo(name, artifact.type, artifact.version, artifact.digest) # type: ignore
+        path = f"{artifact.entity}/{artifact.project}/{name}:{artifact.version}"
+        return ArtifactInfo(name, path, artifact.type, artifact.version, artifact.digest) # type: ignore
 
     def use_artifact(self, artifact: ArtifactInfo) -> Artifact | None:
-        wandb_artifact = self.wandb_run.use_artifact(
-            f"{artifact.name}:{artifact.version}", artifact.type
-        )
+        wandb_artifact = self.wandb_run.use_artifact(artifact.path, artifact.type)
         name = wandb_artifact.name
         if ":" in name: name, _ = name.split(":")
         assert name == artifact.name
