@@ -101,7 +101,8 @@ class WandbExperiment(Experiment, ConsoleMixin):
             project=project_name,
             entity=entity,
             name=run_name,
-            config=config.to_dict() if config is not None else None
+            config=config.to_dict() if config is not None else None,
+            reinit="finish_previous"
         )
         self._step_offset = 0
 
