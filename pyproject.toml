@@ -1,37 +1,21 @@
 [project]
-name = "nanoconfig"
-version = "0.1.1"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = [
-    "click>=8.1.8",
-    "fastapi>=0.115.12",
-    "fsspec>=2025.3.2",
-    "huggingface-hub>=0.30.2",
-    "marimo>=0.13.2",
-    "matplotlib>=3.10.1",
-    "pandas>=2.2.3",
-    "plotly>=6.0.1",
-    "pyarrow>=19.0.1",
-    "rich>=14.0.0",
-    "torch>=2.6.0",
-    "wandb[wandb]>=0.19.9",
+name = "picoml"
+requires-python = "==3.12.*"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
 ]
+dynamic = ["version"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/nanoconfig"]
-
-[project.scripts]
-clearml_task_launcher = "nanoconfig.experiment.util.clearml_launcher:run"
-nd = "nanoconfig.cli:data"
-
-[project.optional-dependencies]
-clearml = ["clearml>=1.18.0"]
+[tool.maturin]
+features = ["pyo3/extension-module"]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
 
 [dependency-groups]
-dev = ["pytest>=8.3.5", "torchvision>=0.21.0"]
+dev = [
+    "pytest>=8.3.5",
+]
