@@ -9,4 +9,7 @@ name = "picoml"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.24.0"
+hashbrown = "0.15.3"
+pyo3 = { version = "0.24.0", features = ["abi3"] }
+serde = "1.0.219"
+uuid = "1.17.0"

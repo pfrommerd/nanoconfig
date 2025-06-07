@@ -32,6 +32,10 @@ wheels = [
 name = "picoml"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "serde" },
+    { name = "uuid" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -39,6 +43,10 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "serde", specifier = ">=0.9.0" },
+    { name = "uuid", specifier = ">=1.30" },
+]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
@@ -66,3 +74,18 @@ sdist = { url = "https://files.pythonhosted.org/packages/ae/3c/c9d525a414d506893
 wheels = [
     { url = "https://files.pythonhosted.org/packages/30/3d/64ad57c803f1fa1e963a7946b6e0fea4a70df53c1a7fed304586539c2bac/pytest-8.3.5-py3-none-any.whl", hash = "sha256:c69214aa47deac29fad6c2a4f590b9c4a9fdb16a403176fe154b79c0b4d4d820", size = 343634 },
 ]
+
+[[package]]
+name = "serde"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/87/f427afe477c83a6b67b6762e9eef9b7799e36fbb279602757114dcf45bb0/serde-0.9.0.tar.gz", hash = "sha256:5dbbf0910e736d9136a97b8e9b301b76a9f3b19f88d45bc5974b0fc68a5bc3fb", size = 28839 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/94/9831ede822ed8fec518bd3d73c56880b40e0973740e91c6f97324282afe0/serde-0.9.0-py3-none-any.whl", hash = "sha256:4887a2077209ef34214be3a18c7796cf442621e30830859c7659fbd784dff299", size = 26204 },
+]
+
+[[package]]
+name = "uuid"
+version = "1.30"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/63/f42f5aa951ebf2c8dac81f77a8edcc1c218640a2a35a03b9ff2d4aa64c3d/uuid-1.30.tar.gz", hash = "sha256:1f87cc004ac5120466f36c5beae48b4c48cc411968eed0eaecd3da82aa96193f", size = 5811 }

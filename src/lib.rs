@@ -1,14 +1,15 @@
-use pyo3::prelude::*;
+pub mod array;
+pub mod graph;
+pub mod io;
+pub mod types;
+pub mod vm;
 
-/// Formats the sum of two numbers as string.
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
+mod bindings;
 
-/// A Python module implemented in Rust.
-#[pymodule]
-fn picoml(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
-    Ok(())
+#[allow(non_snake_case)]
+#[export_name = "PyInit__lib"]
+pub unsafe extern "C" fn __python_init() -> *mut pyo3::ffi::PyObject {
+    pyo3::impl_::trampoline::module_init(|py| {
+        bindings::root::lib::_PYO3_DEF.make_module(py, bindings::root::lib::__PYO3_GIL_USED)
+    })
 }
