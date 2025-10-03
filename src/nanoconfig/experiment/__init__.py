@@ -231,7 +231,9 @@ class Image(Result):
             image = np.expand_dims(image, axis=-1)
         if image.dtype == np.float32:
             image = np.nan_to_num((image*255).clip(0, 255), nan=0., posinf=255., neginf=0.)
-            image = image.astype(np.uint8).squeeze(-1)
+            image = image.astype(np.uint8)
+            if image.shape[-1] == 1:
+                image = image.squeeze(-1)
         if isinstance(image, np.ndarray):
             image = PILImage.fromarray(image)
         experiment.log_image(path, image, series=series, step=step)

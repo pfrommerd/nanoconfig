@@ -160,7 +160,7 @@ class TorchAdapter(DataAdapter[SizedDataset[T]], ty.Generic[T]):
                 raise ValueError(f"Unable to determine size of fragment {f}")
         total_size = data.count_rows()
         # For small datasets, use in memory
-        if total_size < 128*1024 and not self._force_stream:
+        if total_size < 1024*1024 and not self._force_stream:
             batches = list(self.convert(data))
             batches = pytree.tree_map(
                 lambda *xs: (torch.concatenate(xs)
@@ -176,7 +176,7 @@ class TorchAdapter(DataAdapter[SizedDataset[T]], ty.Generic[T]):
                 batches = pytree.tree_map(lambda x: x[perm] if isinstance(x, torch.Tensor) else x, batches)
             return InMemoryDataset(batches)
         else:
-            raise NotImplementedError
+            raise NotImplementedError()
             return StreamingDataset(data, self.convert)
 
 def as_torch(array: pa.FixedSizeListArray, device: torch.device | str = "cpu") -> torch.Tensor:

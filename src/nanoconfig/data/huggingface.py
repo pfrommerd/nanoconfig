@@ -11,6 +11,7 @@ from ..utils import download_url
 from fsspec.implementations.dirfs import DirFileSystem
 
 import functools
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import hashlib
@@ -57,6 +58,33 @@ def image_class_converter(x: pa.RecordBatch, image_column: str, class_column: st
         final_schema = final_schema.remove(1).insert(1, class_field)
     return x.cast(final_schema)
 
+def celeba_converter(x: pa.RecordBatch) -> pa.RecordBatch:
+    # remove celeb_id
+    # get all of the boolean attributes
+    x = x.drop_columns("celeb_id")
+    schema = x.schema
+    attrs = []
+    attr_fields = (schema.field(n) for n in schema.names)
+    attr_fields = list(f for f in attr_fields if f.type == pa.bool_())
+    for field in attr_fields:
+        attrs.append(x.column(field.name).to_numpy(zero_copy_only=False))
+    attrs = np.stack(attrs, axis=-1)
+    x = x.drop_columns([f.name for f in attr_fields])
+    attrs = pa.FixedSizeListArray.from_arrays(
+        pa.array(attrs.flatten(), type=pa.bool_()),
+        list_size=attrs.shape[-1]
+    )
+    x = x.append_column("attrs", attrs)
+    x = x.cast(pa.schema([
+        pa.field("image", pa.struct([
+            pa.field("bytes", pa.binary()),
+            pa.field("path", pa.string())
+        ]), metadata={"mime_type": "image/encoded"}),
+        pa.field("attrs", pa.list_(pa.bool_(), len(attr_fields)),
+            metadata={"mime_type": "class/attributes"})
+    ], metadata={"mime_type": "data/image+attrs"}))
+    return x
+
 SCHEMA_CONVERTERS[pa.schema([
     pa.field("img", pa.struct([
         pa.field("bytes", pa.binary()),
@@ -74,6 +102,24 @@ SCHEMA_CONVERTERS[pa.schema([
     ])),
     pa.field("label", pa.int64())
 ])] = functools.partial(image_class_converter, image_column="image", class_column="label")
+
+SCHEMA_CONVERTERS[
+    pa.schema([
+        pa.field("image", pa.struct([
+            pa.field("bytes", pa.binary()),
+            pa.field("path", pa.string())
+        ])),
+        pa.field("celeb_id", pa.int64())
+    ])
+] = celeba_converter
+
+def count_fields(child: pa.Schema, parent: pa.Schema) -> int:
+    child_fields = {child.field(f) for f in child.names}
+    parent_fields = {parent.field(f) for f in parent.names}
+    for field in child_fields:
+        if field not in parent_fields:
+            return 0
+    return len(child)
 
 @dataclass
 class HfDataSource(DataSource):
@@ -121,11 +167,10 @@ class HfDataSource(DataSource):
                 schema = ds.schema
                 converter = lambda x: x
                 if not schema.metadata.get("mime_type", None):
-                    converter = None
-                    for other_schema, other_converter in SCHEMA_CONVERTERS.items():
-                        if other_schema == schema:
-                            converter = other_converter
-                    if converter is None:
+                    # find the most specific schema
+                    schemas = sorted(SCHEMA_CONVERTERS.items(), key=lambda item: count_fields(item[0], schema), reverse=True)
+                    target_schema, converter = schemas[0]
+                    if count_fields(target_schema, schema) == 0:
                         raise ValueError(f"Unsupported schema: {schema}")
                 with writer.split(split) as split_writer:
                     for fragment in ds.fragments:
